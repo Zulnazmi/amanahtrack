@@ -1,0 +1,11 @@
+{
+  "_readme": "Grams are published catalogue figures. Weigh your own coins on a 0.01 g kitchen scale and overwrite them, because wear changes the real mass. Add 5sen_new and 20sen_new once you have measured them; they are not listed here because I could not confirm their published weights.",
+  "coins": {
+    "5sen_old":  { "grams": 1.41, "sen": 5 },
+    "10sen_old": { "grams": 2.82, "sen": 10 },
+    "20sen_old": { "grams": 5.66, "sen": 20 },
+    "50sen_old": { "grams": 9.33, "sen": 50 },
+    "10sen_new": { "grams": 2.98, "sen": 10 },
+    "50sen_new": { "grams": 5.66, "sen": 50 }
+  }
+}
