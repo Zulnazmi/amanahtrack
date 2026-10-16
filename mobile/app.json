@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "AmanahTrack",
+    "slug": "amanahtrack",
+    "version": "0.1.0",
+    "scheme": "amanahtrack",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-font"
+    ],
+    "android": {
+      "package": "my.amanahtrack.app"
+    },
+    "ios": {
+      "bundleIdentifier": "my.amanahtrack.app",
+      "supportsTablet": true
+    },
+    "newArchEnabled": true
+  }
+}
