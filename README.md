@@ -5,7 +5,7 @@ Shariah spending rules are enforced by the ledger engine itself, not by a
 warning message or a note in a manual. Zakat cannot pay an electricity bill
 because the database refuses to record it.
 
-Final year project by Zulnazmi. Published for viewing and evaluation only,
+Final year project by Muhammad Zulnazmi Rafiqi bin Azhary and Muhammad Syamil bin Jeffry. Published for viewing and evaluation only,
 see [LICENSE](LICENSE).
 
 ## What is actually built
