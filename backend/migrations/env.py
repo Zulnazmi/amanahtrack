@@ -11,7 +11,7 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
+if config.config_file_name is not None and "connection" not in config.attributes:
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
@@ -27,10 +27,10 @@ from app.models import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
-config.set_main_option(
-    "sqlalchemy.url",
-    os.getenv("AMANAH_DATABASE_URL", "sqlite:///./amanahtrack.db"),
-)
+from app.core.config import database_url  # noqa: E402
+
+# "%" is special in this config, and common in passwords
+config.set_main_option("sqlalchemy.url", database_url().replace("%", "%%"))
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -69,6 +69,15 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    given = config.attributes.get("connection")
+    if given is not None:  # called from app.core.migrate
+        context.configure(
+            connection=given, target_metadata=target_metadata, render_as_batch=True
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

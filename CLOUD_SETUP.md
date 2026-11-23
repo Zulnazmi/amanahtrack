@@ -34,6 +34,13 @@ refuses to run against a real one.
    AMANAH_DATABASE_URL = DB_URL
    AMANAH_SECRET_KEY = a long random string (run: python -c "import secrets; print(secrets.token_hex(32))")
    PYTHON_VERSION = 3.12.7
+   AMANAH_S3_ENDPOINT = https://<account id>.r2.cloudflarestorage.com
+   AMANAH_S3_BUCKET = amanahtrack-evidence
+   AMANAH_S3_ACCESS_KEY_ID = from Cloudflare, R2, Manage API tokens
+   AMANAH_S3_SECRET_ACCESS_KEY = shown once by Cloudflare
+   The R2 token needs Object Read & Write on this one bucket only.
+   Keep the bucket private: public development URL off, no custom domain.
+   Check the settings with: python check_storage.py
 4. Deploy. When it is live, open https://<name>.onrender.com/docs to check.
 
 ## Part 4. Point the Pi and the app at it
@@ -50,7 +57,10 @@ App (laptop):
 ## Notes
 - Free Render services sleep after 15 minutes without traffic. The box heartbeat every 30 seconds keeps it awake while the Pi is on. The first request after a sleep takes about a minute, so open the /docs page before a demo.
 - Only run one backend instance (the live feed keeps its connections in memory).
-- Photos are stored inside the database. Neon free gives 1 GB.
+- Photos are saved with the alert, then moved to R2 within about a minute and checked
+  before the database copy is removed. If R2 is down they wait in the database.
+- Back up the database and the bucket. Nothing is deleted automatically.
+- The database is upgraded by itself when the server starts. Back it up first.
 - The server will not start without a strong AMANAH_SECRET_KEY.
 - The server and the files in device/ must be updated together. Boxes running older
   code are refused, because their messages could be replayed.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import os
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core import auth, config, throttle
+from app.core import auth, config, migrate, throttle
 from app.core.auth import assert_same_institution, require_roles
 from app.core.fiqh import FUND_RULES, FundCategory, PurposeCode, rule_for
 from app.models import (
@@ -48,26 +48,22 @@ from app.models import (
     TxnStatus,
 )
 from app.services import alerts as alert_service
-from app.services import device_auth, ledger, sealing, telemetry
+from app.services import device_auth, ledger, sealing, storage, telemetry
 from app.services import push as push_service
 from app.services.live import hub
 from app.services.ledger import FundRuleViolation, InsufficientBalance, LedgerError
 
 # SQLite by default so a fresh clone runs with no setup. Point
 # AMANAH_DATABASE_URL at Postgres when you are ready; nothing else changes.
-DATABASE_URL = os.getenv("AMANAH_DATABASE_URL", "sqlite:///./amanahtrack.db")
-# Hosts such as Neon hand out plain "postgres://" or "postgresql://" links.
-# Tell SQLAlchemy to use the psycopg 3 driver for them.
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
-if DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgresql://"):]
+DATABASE_URL = config.database_url()
 
 _connect_args = (
     {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 )
 engine = create_engine(DATABASE_URL, connect_args=_connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
+# None means photos stay in the database
+photo_store = storage.from_env()
 hub.listeners.append(push_service.make_listener(lambda: SessionLocal()))
 
 
@@ -115,19 +111,34 @@ async def _sweeper():
                 for m in messages:
                     await hub.broadcast(inst_id, m)
         except Exception:  # the sweeper must never die
-            import logging
-
             logging.getLogger("amanahtrack").exception("sweep failed")
+
+
+async def _archiver():
+    """Move evidence photos to cloud storage, off the request path."""
+    while True:
+        try:
+            await asyncio.to_thread(storage.archive_pending, SessionLocal, photo_store)
+        except Exception:  # try again later; the photo is still in the database
+            logging.getLogger("amanahtrack").exception("moving photos failed")
+        await asyncio.sleep(30)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(engine)
-    task = asyncio.create_task(_sweeper())
+    migrate.upgrade(engine)
+    tasks = [asyncio.create_task(_sweeper())]
+    if photo_store is not None:
+        tasks.append(asyncio.create_task(_archiver()))
+    elif config.is_production():
+        logging.getLogger("amanahtrack").warning(
+            "Evidence storage is not configured: photos stay in the database"
+        )
     try:
         yield
     finally:
-        task.cancel()
+        for task in tasks:
+            task.cancel()
 
 
 app = FastAPI(
@@ -869,7 +880,7 @@ def _alert_out(db: Session, a: Alert) -> AlertOut:
         device_label=device.label if device else None,
         related_reference=a.related_reference,
         occurred_at=a.occurred_at,
-        has_photo=a.photo is not None,
+        has_photo=a.photo_sha256 is not None,
         photo_sha256=a.photo_sha256,
         reviewed_by=reviewer.name if reviewer else None,
         reviewed_at=a.reviewed_at,
@@ -1002,10 +1013,16 @@ def get_alert_photo(
     inst = get_institution(db, slug)
     assert_same_institution(user, inst)
     alert = _get_alert(db, inst, alert_id)
-    if alert.photo is None:
+    if alert.photo_sha256 is None:
         raise HTTPException(404, "This alert has no photo")
+    try:
+        photo = storage.load_photo(alert, photo_store)
+    except storage.StorageUnavailable:
+        raise HTTPException(503, "Photo storage is not reachable. Try again soon.")
+    if photo is None:
+        raise HTTPException(410, "The photo for this alert is missing")
     return Response(
-        content=alert.photo,
+        content=photo,
         media_type=alert.photo_mime or "image/jpeg",
         headers={"Cache-Control": "private, max-age=300"},
     )
@@ -1021,7 +1038,12 @@ def verify_alert(
     """Re-run every integrity check on this alert, live."""
     inst = get_institution(db, slug)
     assert_same_institution(user, inst)
-    return alert_service.verify_alert(db, _get_alert(db, inst, alert_id))
+    alert = _get_alert(db, inst, alert_id)
+    try:
+        return alert_service.verify_alert(db, alert, photo_store)
+    except storage.StorageUnavailable:
+        # Not being able to look is not the same as finding tampering.
+        raise HTTPException(503, "Photo storage is not reachable. Try again soon.")
 
 
 @app.post("/i/{slug}/alerts/{alert_id}/review")

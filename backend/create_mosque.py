@@ -12,10 +12,10 @@ import secrets
 
 from sqlalchemy import select
 
-from app.core import auth
+from app.core import auth, migrate
 from app.core.fiqh import FundCategory, PurposeCode
 from app.main import SessionLocal, engine
-from app.models import AccountNature, Base, Device, Fund, Institution, Role, User
+from app.models import AccountNature, Device, Fund, Institution, Role, User
 
 FUNDS = [
     ("cash", FundCategory.SADAQAH, "Tunai di tangan", "Cash on hand", None),
@@ -83,7 +83,7 @@ def create(db, *, name, slug, state, admin_name, email, password, serial, box_la
 
 
 def main():
-    Base.metadata.create_all(engine)
+    migrate.upgrade(engine)
     details = {
         "name": input("Mosque name: ").strip(),
         "slug": input("Short name (for example al-hidayah): ").strip(),

@@ -363,7 +363,12 @@ class Alert(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-    photo: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Here until it is safely in cloud storage, then photo_key says where it is.
+    # Deferred so listing alerts does not load every picture.
+    photo: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True, deferred=True
+    )
+    photo_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     photo_mime: Mapped[str | None] = mapped_column(String(40), nullable=True)
     photo_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     device_signature: Mapped[str | None] = mapped_column(String(64), nullable=True)

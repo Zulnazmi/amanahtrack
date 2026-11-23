@@ -82,7 +82,7 @@ def event_message(db: Session, event: DeviceEvent, alert: Alert | None) -> dict:
             "occurred_at": iso(event.occurred_at),
             "alert_id": alert.id if alert else None,
             "severity": alert.severity.value if alert else None,
-            "has_photo": bool(alert and alert.photo is not None),
+            "has_photo": bool(alert and alert.photo_sha256),
         },
     }
 

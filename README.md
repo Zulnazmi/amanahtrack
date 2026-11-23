@@ -25,7 +25,7 @@ see [LICENSE](LICENSE).
 | Cloud deployment | guide in CLOUD_SETUP.md, not yet run in production |
 | Load-cell coin estimator | written, not tested on real hardware |
 
-81 tests pass. In the demo the box readings and alert photos are
+94 tests pass (2 need a PostgreSQL test database). In the demo the box readings and alert photos are
 **simulated**. The gaps are listed honestly because a demo that hides them
 falls apart under a judge's questions.
 
@@ -62,7 +62,7 @@ uvicorn app.main:app --reload
 Open http://localhost:8000/docs for the interactive API.
 
 ```bash
-pytest -q               # 81 tests
+pytest -q               # 94 tests (pip install -r requirements-dev.txt first)
 ```
 
 ## Running the mobile app
@@ -118,7 +118,7 @@ Nothing here should be deployed as-is. In rough order:
 - **Deployment.** The cloud setup has not been run in production yet.
 - **Known integrity gaps.** Transaction status is not sealed, and no copy of
   the latest hash is kept outside the database.
-- **PostgreSQL.** SQLite is fine for development and wrong for concurrent
+- **PostgreSQL in production.** Tested, not yet hosted. SQLite is fine for development and wrong for concurrent
   writes from a bot, a dashboard, and several boxes at once.
 - **Offline sync.** Rural suraus lose connectivity. The client currently
   assumes the network is there.

@@ -21,6 +21,15 @@ def is_production() -> bool:
     return bool(os.getenv("RENDER")) or (bool(url) and not url.startswith("sqlite"))
 
 
+def database_url() -> str:
+    """Hosts such as Neon hand out plain links. Use the psycopg 3 driver."""
+    url = os.getenv("AMANAH_DATABASE_URL", "sqlite:///./amanahtrack.db")
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 def secret_key() -> str:
     key = os.getenv("AMANAH_SECRET_KEY", "")
     if is_production():

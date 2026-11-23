@@ -35,7 +35,7 @@ from app.models import (
     AlertStatus,
     Device,
 )
-from app.services import sealing
+from app.services import sealing, storage
 from app.services.ledger import lock_books
 
 MAX_PHOTO_BYTES = 3 * 1024 * 1024
@@ -214,16 +214,27 @@ class Check:
         return {"key": self.key, "label": self.label, "ok": self.ok, "detail": self.detail}
 
 
-def verify_alert(db: Session, alert: Alert) -> dict:
+def verify_alert(db: Session, alert: Alert, store=None) -> dict:
     checks: list[Check] = []
     serial = _serial_of(db, alert)
 
     # 1. photo bytes against recorded hash
-    if alert.photo is None:
+    photo = storage.load_photo(alert, store)
+    if photo is None and alert.photo_sha256 is None:
         checks.append(Check("photo", "Photo matches its SHA-256", None, "No photo attached"))
         recomputed = None
+    elif photo is None:
+        checks.append(
+            Check(
+                "photo",
+                "Photo matches its SHA-256",
+                False,
+                "A photo was recorded with this alert but is now missing",
+            )
+        )
+        recomputed = None
     else:
-        recomputed = hashlib.sha256(alert.photo).hexdigest()
+        recomputed = hashlib.sha256(photo).hexdigest()
         ok = recomputed == alert.photo_sha256
         checks.append(
             Check(
