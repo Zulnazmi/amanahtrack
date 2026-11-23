@@ -15,6 +15,17 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://amanahtrack.onrender.com"
+      }
+    },
+    "production": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://amanahtrack.onrender.com"
+      },
+      "android": {
+        "buildType": "app-bundle"
       }
     }
   }

@@ -11,7 +11,12 @@
       "expo-notifications"
     ],
     "android": {
-      "package": "my.amanahtrack.app"
+      "package": "my.amanahtrack.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#06100D"
+      },
+      "allowBackup": false
     },
     "ios": {
       "bundleIdentifier": "my.amanahtrack.app",
@@ -19,11 +24,10 @@
     },
     "newArchEnabled": true,
     "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "2a7d2c14-565d-4676-8410-715e61d4ca30"
-      }
+      "router": {}
     },
-    "owner": "syamiljeffry"
+    "owner": "zesuro",
+    "icon": "./assets/icon.png",
+    "backgroundColor": "#06100D"
   }
 }
