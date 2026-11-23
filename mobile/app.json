@@ -24,7 +24,10 @@
     },
     "newArchEnabled": true,
     "extra": {
-      "router": {}
+      "router": {},
+      "eas": {
+        "projectId": "2be3aaf1-f908-4019-a074-406f24b49a43"
+      }
     },
     "owner": "zesuro",
     "icon": "./assets/icon.png",
