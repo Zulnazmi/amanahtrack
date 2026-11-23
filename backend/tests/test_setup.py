@@ -51,3 +51,25 @@ def test_weak_password_is_refused_and_nothing_is_saved(db):
     with pytest.raises(ValueError):
         create_mosque.create(db, **{**DETAILS, "password": "demo1234"})
     assert db.query(Institution).count() == 0
+
+
+def test_server_starts_after_seeding_twice(tmp_path):
+    """The demo path: seed, start, seed again, start."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, AMANAH_DATABASE_URL=f"sqlite:///{(tmp_path / 's.db').as_posix()}",
+               AMANAH_PUSH="off", PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
+    for key in [k for k in env if k.startswith("AMANAH_S3_") or k in ("AMANAH_ENV", "RENDER")]:
+        del env[key]
+    start = (
+        "from fastapi.testclient import TestClient; from app.main import app\n"
+        "with TestClient(app) as c: assert c.get('/health').status_code == 200"
+    )
+    for args in (["seed.py"], ["-c", start], ["seed.py"], ["-c", start]):
+        done = subprocess.run([sys.executable, *args], cwd=backend, env=env,
+                              capture_output=True, text=True, encoding="utf-8")
+        assert done.returncode == 0, done.stderr[-2000:]

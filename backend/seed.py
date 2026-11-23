@@ -5,7 +5,9 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from app.core import auth, config
+from sqlalchemy import text
+
+from app.core import auth, config, migrate
 from app.core.fiqh import FundCategory, PurposeCode
 from app.main import Base, SessionLocal, engine
 from app.models import (
@@ -136,7 +138,10 @@ def run():
             "For a real mosque use: python create_mosque.py"
         )
     Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    # Same path as the server, so a seeded database is a versioned one
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+    migrate.upgrade(engine)
     db = SessionLocal()
 
     inst = Institution(name="Masjid Al-Hidayah", slug="al-hidayah", state="Perak")
