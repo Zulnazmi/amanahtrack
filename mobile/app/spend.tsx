@@ -57,7 +57,8 @@ export default function SpendScreen() {
   useEffect(() => {
     api.funds().then((f) => {
       setFunds(f);
-      if (!fundCode && f.length) setFundCode(f[1]?.code ?? f[0].code);
+      const first = f.find((x) => x.code !== 'cash');
+      if (!fundCode && first) setFundCode(first.code);
     });
   }, []);
 
@@ -184,7 +185,7 @@ export default function SpendScreen() {
             <View style={st.suggestRow}>
               <Text style={st.suggestLabel}>Guna dana ini sebagai ganti:</Text>
               {verdict.suggested_funds.map((code) => {
-                const alt = funds.find((f) => f.category === code);
+                const alt = funds.find((f) => f.code !== 'cash' && f.category === code);
                 if (!alt) return null;
                 return (
                   <Pressable

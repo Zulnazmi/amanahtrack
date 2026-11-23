@@ -52,7 +52,7 @@ from app.services import alerts as alert_service
 from app.services import ledger, sealing, telemetry
 from app.services import push as push_service
 from app.services.live import hub
-from app.services.ledger import FundRuleViolation, LedgerError
+from app.services.ledger import FundRuleViolation, InsufficientBalance, LedgerError
 
 # SQLite by default so a fresh clone runs with no setup. Point
 # AMANAH_DATABASE_URL at Postgres when you are ready; nothing else changes.
@@ -214,7 +214,8 @@ class ReviewIn(BaseModel):
 class CountIn(BaseModel):
     device_serial: str | None = None
     counted_total: Decimal = Field(ge=0)
-    witness_count: int = 1
+    fund_code: str | None = None
+    witness_count: int = Field(default=1, ge=1)
     note: str | None = None
 
 
@@ -398,16 +399,20 @@ def create_donation(
     inst = get_institution(db, slug)
     assert_same_institution(user, inst)
     fund = get_fund(db, inst, body.fund_code)
-    txn = ledger.record_donation(
-        db,
-        institution_id=inst.id,
-        fund_id=fund.id,
-        cash_fund_id=cash_fund(db, inst).id,
-        amount=body.amount,
-        description=body.description,
-        channel=body.channel,
-        recorded_by=user.id,
-    )
+    try:
+        txn = ledger.record_donation(
+            db,
+            institution_id=inst.id,
+            fund_id=fund.id,
+            cash_fund_id=cash_fund(db, inst).id,
+            amount=body.amount,
+            description=body.description,
+            channel=body.channel,
+            recorded_by=user.id,
+        )
+    except LedgerError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc))
     db.commit()
     return {
         "reference": txn.reference,
@@ -428,17 +433,6 @@ def create_disbursement(
     inst = get_institution(db, slug)
     assert_same_institution(user, inst)
     fund = get_fund(db, inst, body.fund_code)
-
-    balance = ledger.fund_balance(db, fund.id)
-    if balance < ledger.money(body.amount):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "insufficient_fund_balance",
-                "message_en": f"{fund.label_en} holds only {balance}.",
-                "message_ms": f"Baki {fund.label_ms} hanya {balance}.",
-            },
-        )
 
     try:
         txn = ledger.record_disbursement(
@@ -462,6 +456,14 @@ def create_disbursement(
                 "suggested_funds": [f.value for f in exc.verdict.suggested_funds],
             },
         )
+    except InsufficientBalance as exc:
+        detail = {
+            "code": "insufficient_fund_balance",
+            "message_en": str(exc),
+            "message_ms": f"Baki {exc.fund.label_ms} hanya {exc.balance}.",
+        }
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=detail)
     except LedgerError as exc:
         db.rollback()
         raise HTTPException(400, str(exc))
@@ -730,16 +732,22 @@ def close_count(
             raise HTTPException(404, "Unknown device")
         device_id = device.id
 
-    session_row = ledger.close_count(
-        db,
-        institution_id=inst.id,
-        device_id=device_id,
-        counted_total=body.counted_total,
-        cash_fund_id=cash_fund(db, inst).id,
-        witness_count=body.witness_count,
-        note=body.note,
-        closed_by=user.id,
-    )
+    target = get_fund(db, inst, body.fund_code) if body.fund_code else None
+    try:
+        session_row = ledger.close_count(
+            db,
+            institution_id=inst.id,
+            device_id=device_id,
+            counted_total=body.counted_total,
+            cash_fund_id=cash_fund(db, inst).id,
+            witness_count=body.witness_count,
+            note=body.note,
+            closed_by=user.id,
+            target_fund_id=target.id if target else None,
+        )
+    except LedgerError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     raised = None
     if session_row.variance != Decimal("0"):
         adjustment = db.scalars(

@@ -99,7 +99,7 @@ export default function CountScreen() {
           <Text style={clean ? c.cleanBody : c.flagBody}>
             {clean
               ? 'Jumlah dikira sepadan dengan anggaran tabung. Rekod ini menjadi bukti bahawa kutipan diuruskan dengan amanah.'
-              : 'Perbezaan disimpan kekal dalam lejar bersama nama saksi. Sensor memberi anggaran, bukan jumlah tepat, jadi perbezaan kecil adalah biasa.'}
+              : 'Perbezaan disimpan kekal dalam lejar bersama bilangan saksi. Sensor memberi anggaran, bukan jumlah tepat, jadi perbezaan kecil adalah biasa.'}
           </Text>
         </View>
 

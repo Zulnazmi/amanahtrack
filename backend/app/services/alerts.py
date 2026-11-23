@@ -36,6 +36,7 @@ from app.models import (
     Device,
 )
 from app.services import sealing
+from app.services.ledger import lock_books
 
 MAX_PHOTO_BYTES = 3 * 1024 * 1024
 VARIANCE_WARN = Decimal("20.00")
@@ -139,6 +140,7 @@ def create_alert(
         if claimed_sha256 is not None and claimed_sha256.lower() != photo_sha:
             raise AlertError("Photo hash does not match the bytes received")
 
+    lock_books(db, institution_id)  # the alert chain has one head too
     last_seq, prev = _head(db, institution_id)
     alert = Alert(
         institution_id=institution_id,

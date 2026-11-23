@@ -29,6 +29,7 @@ from app.models import (
     Entry,
     EntrySide,
     Fund,
+    Institution,
     Seal,
     Transaction,
     TxnStatus,
@@ -54,6 +55,39 @@ class FundRuleViolation(LedgerError):
         super().__init__(verdict.message_en)
 
 
+class InsufficientBalance(LedgerError):
+    """The fund does not hold enough."""
+
+    def __init__(self, fund: Fund, balance: Decimal):
+        self.fund = fund
+        self.balance = balance
+        super().__init__(f"{fund.label_en} holds only {balance}.")
+
+
+class NoTargetFund(LedgerError):
+    """Counted cash has no fund to belong to."""
+
+
+def lock_books(db: Session, institution_id: str) -> None:
+    """One writer at a time per institution, until commit.
+
+    Sequence numbers, the head of the chain and the balance check are all
+    "read, then write". Two requests doing that at once would collide or
+    overspend. On PostgreSQL this holds a row lock; SQLite ignores it and
+    serialises writers on its own.
+    """
+    db.execute(
+        select(Institution.id)
+        .where(Institution.id == institution_id)
+        .with_for_update(key_share=True)
+    )
+
+
+def is_cash(fund: Fund) -> bool:
+    """Cash is where the money physically is, not whose it is."""
+    return fund.code == "cash" or fund.nature is AccountNature.ASSET
+
+
 def money(value) -> Decimal:
     return Decimal(str(value)).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
 
@@ -73,6 +107,15 @@ def check_spend(fund: Fund, purpose: PurposeCode) -> RuleVerdict:
     """
 
     rule = rule_for(fund.category)
+
+    if is_cash(fund):
+        return RuleVerdict(
+            allowed=False,
+            code="not_a_fund",
+            message_en="Cash is not a fund. Choose the fund this money belongs to.",
+            message_ms="Tunai bukan dana. Pilih dana pemilik wang ini.",
+            suggested_funds=[FundCategory.SADAQAH],
+        )
 
     if not rule.spendable:
         return RuleVerdict(
@@ -179,6 +222,13 @@ def post(
     if any(l.amount <= 0 for l in legs):
         raise LedgerError("Every leg must carry a positive amount")
 
+    # The same account on both sides balances perfectly and moves nothing.
+    # Accepting it would record money that never reaches any balance.
+    debited = {l.fund_id for l in legs if l.side is EntrySide.DEBIT}
+    credited = {l.fund_id for l in legs if l.side is EntrySide.CREDIT}
+    if debited & credited:
+        raise LedgerError("The same account cannot be on both sides")
+
     # A debit against a fund is money leaving it. That is the moment the
     # fiqh rules bite.
     if purpose is not None:
@@ -192,6 +242,7 @@ def post(
             if not verdict:
                 raise FundRuleViolation(verdict)
 
+    lock_books(db, institution_id)
     seq = _next_seq(db, institution_id, Transaction)
     occurred = occurred_at or _now()
 
@@ -289,6 +340,16 @@ def record_disbursement(
     """Money going out. This is the call that can be refused."""
 
     amt = money(amount)
+    lock_books(db, institution_id)
+    fund = db.get(Fund, fund_id)
+    if fund is None:
+        raise LedgerError(f"Unknown fund {fund_id}")
+    verdict = check_spend(fund, purpose)
+    if not verdict:
+        raise FundRuleViolation(verdict)
+    balance = fund_balance(db, fund_id)
+    if balance < amt:
+        raise InsufficientBalance(fund, balance)
     return post(
         db,
         institution_id=institution_id,
@@ -308,6 +369,7 @@ def reverse(
 ) -> Transaction:
     """Correct a mistake by writing its mirror. Never by editing history."""
 
+    lock_books(db, txn.institution_id)
     if txn.status is TxnStatus.VOID:
         raise LedgerError("Transaction is already reversed")
 
@@ -391,6 +453,7 @@ def close_count(
     witness_count: int = 1,
     note: str | None = None,
     closed_by: str | None = None,
+    target_fund_id: str | None = None,
 ) -> CountSession:
     """Reconcile provisional device entries against a physical count.
 
@@ -402,6 +465,7 @@ def close_count(
     """
 
     counted = money(counted_total)
+    lock_books(db, institution_id)
 
     pending = db.scalars(
         select(Transaction).where(
@@ -424,14 +488,20 @@ def close_count(
     variance = money(counted - estimated)
 
     if variance != Decimal("0"):
-        target_fund = None
-        if pending:
+        # Whose money is it? What the caller said, then what the sensor
+        # entries said, then what the box is set up to collect for. A box that
+        # was offline, or held only notes, has no sensor entries at all.
+        target_fund = target_fund_id
+        if target_fund is None and pending:
             for entry in pending[-1].entries:
                 if entry.side is EntrySide.CREDIT:
                     target_fund = entry.fund_id
                     break
-        if target_fund is None:
-            target_fund = cash_fund_id
+        if target_fund is None and device_id is not None:
+            device = db.get(Device, device_id)
+            target_fund = device.default_fund_id if device else None
+        if target_fund is None or target_fund == cash_fund_id:
+            raise NoTargetFund("Choose which fund this counted cash belongs to")
 
         side_cash = EntrySide.DEBIT if variance > 0 else EntrySide.CREDIT
         side_fund = EntrySide.CREDIT if variance > 0 else EntrySide.DEBIT
@@ -475,9 +545,37 @@ def verify(db: Session, institution_id: str) -> sealing.VerificationResult:
         .order_by(Seal.seq.asc())
     ).all()
 
+    unsealed = db.scalars(
+        select(Transaction)
+        .where(
+            Transaction.institution_id == institution_id,
+            ~Transaction.id.in_(
+                select(Seal.transaction_id).where(
+                    Seal.institution_id == institution_id
+                )
+            ),
+        )
+        .order_by(Transaction.seq.asc())
+        .limit(1)
+    ).first()
+    if unsealed is not None:
+        return sealing.VerificationResult(
+            intact=False,
+            checked=0,
+            broken_at_seq=unsealed.seq,
+            reason="a transaction exists without a seal",
+        )
+
     records = []
     for seal in seals:
         txn = db.get(Transaction, seal.transaction_id)
+        if txn is None:
+            return sealing.VerificationResult(
+                intact=False,
+                checked=len(records),
+                broken_at_seq=seal.seq,
+                reason="a sealed transaction is missing",
+            )
         records.append((seal, txn, txn.entries))
 
     return sealing.verify_chain(records)
