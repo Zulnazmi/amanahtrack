@@ -30,8 +30,8 @@ export function BottomBar({ active, alertCount = 0 }: { active: string; alertCou
         {tabs.map((t) => {
           const on = t.key === active;
           return (
+            <View key={t.key} style={{ flex: 1 }}>
             <PressScale
-              key={t.key}
               style={[s.item, on && s.itemOn]}
               onPress={() => (on ? undefined : router.push(t.href as never))}
               accessibilityRole="button"
@@ -47,6 +47,7 @@ export function BottomBar({ active, alertCount = 0 }: { active: string; alertCou
               </View>
               <Text style={[s.label, on && s.labelOn]}>{t.label}</Text>
             </PressScale>
+            </View>
           );
         })}
       </View>
@@ -66,7 +67,6 @@ const s = StyleSheet.create({
     borderColor: colors.lineStrong,
   },
   item: {
-    flex: 1,
     height: 52,
     borderRadius: 16,
     alignItems: 'center',

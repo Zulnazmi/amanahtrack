@@ -24,6 +24,8 @@ def upgrade() -> None:
     op.add_column("transactions", sa.Column("request_id", sa.String(64), nullable=True))
     op.create_index("ux_txn_request", "transactions", ["institution_id", "request_id"], unique=True)
     op.add_column("count_sessions", sa.Column("witness_names", sa.Text(), nullable=True))
+    op.add_column("count_sessions", sa.Column("request_id", sa.String(64), nullable=True))
+    op.create_index("ux_count_request", "count_sessions", ["institution_id", "request_id"], unique=True)
 
     op.create_table(
         "approvals",

@@ -9,12 +9,12 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
-import { api, canWrite, Fund } from '../src/api/client';
+import { api, canApprove, canWrite, Fund } from '../src/api/client';
 import { useLive } from '../src/live';
 import { useSession } from '../src/session';
 import { colors, fonts, radius, ringgit, space } from '../src/theme';
 import { BottomBar } from '../src/ui/BottomBar';
-import { Icon } from '../src/ui/Icon';
+import { Icon, IconName } from '../src/ui/Icon';
 import { LogoMark } from '../src/ui/Logo';
 import { FadeUp, GrowX, PressScale, Pulse, Skeleton } from '../src/ui/motion';
 
@@ -67,6 +67,7 @@ export default function HomeScreen() {
   const [funds, setFunds] = useState<Fund[]>([]);
   const [verification, setVerification] = useState<Verification | null>(null);
   const [alertInfo, setAlertInfo] = useState({ open: 0, critical_open: 0 });
+  const [waiting, setWaiting] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +81,13 @@ export default function HomeScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [f, v, a] = await Promise.all([api.funds(), api.verify(), api.alertSummary()]);
+      const [f, v, a, w] = await Promise.all([
+        api.funds(),
+        api.verify(),
+        api.alertSummary(),
+        api.approvals('pending'),
+      ]);
+      setWaiting(w.filter((x) => x.can_decide).length);
       setFunds(f);
       setVerification(v);
       setAlertInfo(a);
@@ -130,7 +137,7 @@ export default function HomeScreen() {
             <View style={s.headLeft}>
               <LogoMark size={38} />
               <View>
-                <Text style={s.institution}>Masjid Al-Hidayah</Text>
+                <Text style={s.institution}>{session?.institution || 'AmanahTrack'}</Text>
                 <Text style={s.role}>
                   {session?.name} {'·'} {ROLE_LABEL[session?.role ?? ''] ?? session?.role}
                 </Text>
@@ -244,6 +251,23 @@ export default function HomeScreen() {
               </View>
             </FadeUp>
 
+            <FadeUp delay={160}>
+              <View style={s.actions}>
+                {writable && <Action icon="box" label="Rekod derma" href="/donate" />}
+                {writable && <Action icon="count" label="Kira tabung" href="/count" />}
+                <Action
+                  icon="check"
+                  label={canApprove(session?.role) && waiting > 0 ? `Kelulusan (${waiting})` : 'Kelulusan'}
+                  href="/approvals"
+                  hot={waiting > 0}
+                />
+                {(session?.role === 'admin' || session?.role === 'auditor') && (
+                  <Action icon="shield" label="Pengguna" href="/people" />
+                )}
+                <Action icon="lock" label="Kata laluan" href="/password" />
+              </View>
+            </FadeUp>
+
             {pending > 0 && (
               <FadeUp delay={220}>
                 <View style={s.boxCard}>
@@ -287,6 +311,21 @@ export default function HomeScreen() {
 
       <BottomBar active="home" alertCount={alertInfo.open} />
     </View>
+  );
+}
+
+function Action({ icon, label, href, hot }: { icon: IconName; label: string; href: string; hot?: boolean }) {
+  const router = useRouter();
+  return (
+    <PressScale
+      onPress={() => router.push(href as never)}
+      style={[s.action, hot && s.actionHot]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Icon name={icon} size={18} color={hot ? colors.brass : colors.green} />
+      <Text style={s.actionText}>{label}</Text>
+    </PressScale>
   );
 }
 
@@ -421,6 +460,21 @@ const s = StyleSheet.create({
   errorBar: { padding: space.md, backgroundColor: colors.dangerSoft, borderRadius: radius.md },
   errorText: { fontFamily: fonts.body, fontSize: 14, color: colors.danger },
   errorHint: { fontFamily: fonts.body, fontSize: 12, color: colors.danger, marginTop: 2, opacity: 0.8 },
+
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  action: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.lineStrong,
+  },
+  actionHot: { backgroundColor: colors.brassSoft, borderColor: 'rgba(240,198,116,0.35)' },
+  actionText: { fontFamily: fonts.bodySemi, fontSize: 14, color: colors.ink },
 
   hero: {
     borderRadius: radius.xl,

@@ -193,6 +193,7 @@ class DisbursementIn(BaseModel):
     amount: Decimal = Field(gt=0)
     purpose: PurposeCode
     description: str
+    request_id: str | None = Field(default=None, min_length=8, max_length=64)
 
 
 class SpendCheckIn(BaseModel):
@@ -236,6 +237,7 @@ class CountIn(BaseModel):
     device_serial: str | None = None
     counted_total: Decimal = Field(ge=0)
     fund_code: str | None = None
+    request_id: str | None = Field(default=None, min_length=8, max_length=64)
     witness_count: int = Field(default=1, ge=1)
     witnesses: list[str] = Field(default=[], max_length=10)
     note: str | None = None
@@ -289,6 +291,7 @@ class LoginOut(BaseModel):
     role: Role
     institution_slug: str
     must_change_password: bool = False
+    institution: str = ""
 
 
 @app.post("/auth/login", response_model=LoginOut)
@@ -319,6 +322,7 @@ def login(
         role=user.role,
         institution_slug=inst.slug,
         must_change_password=user.must_change_password,
+        institution=inst.name,
     )
 
 
@@ -446,6 +450,37 @@ def check_spend(
     }
 
 
+def _already_recorded(db, inst, user, fund, body, purpose=None) -> Transaction | None:
+    """Lock the books, then find what an earlier try of this request recorded."""
+    ledger.lock_books(db, inst.id)
+    if not body.request_id:
+        return None
+    again = db.scalars(
+        select(Transaction).where(
+            Transaction.institution_id == inst.id,
+            Transaction.request_id == body.request_id,
+        )
+    ).first()
+    if again is None:
+        return None
+    if (
+        _txn_amount(again) != ledger.money(body.amount)
+        or again.description != body.description
+        or again.recorded_by != user.id
+        or again.purpose != purpose
+        or all(e.fund_id != fund.id for e in again.entries)
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_recorded",
+                "message_en": "An earlier version of this form was already recorded. Check the ledger.",
+                "message_ms": "Versi awal borang ini telah direkod. Sila semak lejar.",
+            },
+        )
+    return again
+
+
 def _donation_out(db: Session, txn: Transaction, fund: Fund) -> dict:
     r = db.scalars(select(Receipt).where(Receipt.transaction_id == txn.id)).first()
     return {
@@ -490,24 +525,9 @@ def create_donation(
     fund = get_fund(db, inst, body.fund_code)
     if body.channel is Channel.DEVICE:
         raise HTTPException(422, "Only a box can record a box donation")
-    ledger.lock_books(db, inst.id)
-    if body.request_id:
-        again = db.scalars(
-            select(Transaction).where(
-                Transaction.institution_id == inst.id,
-                Transaction.request_id == body.request_id,
-            )
-        ).first()
-        if again is not None:
-            same = (
-                _txn_amount(again) == ledger.money(body.amount)
-                and again.description == body.description
-                and again.recorded_by == user.id
-                and any(e.fund_id == fund.id for e in again.entries)
-            )
-            if not same:
-                raise HTTPException(409, "This request id was already used")
-            return _donation_out(db, again, fund)
+    again = _already_recorded(db, inst, user, fund, body)
+    if again is not None:
+        return _donation_out(db, again, fund)
     try:
         txn = ledger.record_donation(
             db,
@@ -547,6 +567,13 @@ def create_disbursement(
     inst = get_institution(db, slug)
     assert_same_institution(user, inst)
     fund = get_fund(db, inst, body.fund_code)
+    again = _already_recorded(db, inst, user, fund, body, body.purpose)
+    if again is not None:
+        return {
+            "reference": again.reference,
+            "fund": fund.code,
+            "balance": str(ledger.fund_balance(db, fund.id)),
+        }
     limit = inst.approval_limit
     if limit is not None and ledger.money(body.amount) > limit:
         # A forbidden purpose should say so, not send someone to wait for approval
@@ -581,6 +608,7 @@ def create_disbursement(
         db.rollback()
         raise HTTPException(400, str(exc))
 
+    txn.request_id = body.request_id
     db.commit()
     return {
         "reference": txn.reference,
@@ -852,6 +880,30 @@ def close_count(
         device_id = device.id
 
     target = get_fund(db, inst, body.fund_code) if body.fund_code else None
+    ledger.lock_books(db, inst.id)
+    if body.request_id:
+        # Counting the same cash twice would invent money.
+        again = db.scalars(
+            select(CountSession).where(
+                CountSession.institution_id == inst.id,
+                CountSession.request_id == body.request_id,
+            )
+        ).first()
+        if again is not None:
+            if (
+                again.counted_total != ledger.money(body.counted_total)
+                or again.device_id != device_id
+                or again.closed_by != user.id
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "already_recorded",
+                        "message_en": "This count was already recorded. Check the ledger.",
+                        "message_ms": "Kiraan ini telah direkod. Sila semak lejar.",
+                    },
+                )
+            return _count_out(again, again.variance != 0)
     try:
         session_row = ledger.close_count(
             db,
@@ -868,6 +920,7 @@ def close_count(
     except LedgerError as exc:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    session_row.request_id = body.request_id
     raised = None
     if session_row.variance != Decimal("0"):
         adjustment = db.scalars(
@@ -888,12 +941,16 @@ def close_count(
             adjustment_ref=adjustment.reference if adjustment else None,
         )
     db.commit()
+    return _count_out(session_row, raised is not None)
+
+
+def _count_out(row: CountSession, raised: bool) -> dict:
     return {
-        "alert_raised": raised is not None,
-        "counted": str(session_row.counted_total),
-        "estimated": str(session_row.estimated_total),
-        "variance": str(session_row.variance),
-        "flagged": abs(session_row.variance) > Decimal("20.00"),
+        "alert_raised": raised,
+        "counted": str(row.counted_total),
+        "estimated": str(row.estimated_total),
+        "variance": str(row.variance),
+        "flagged": abs(row.variance) > Decimal("20.00"),
     }
 
 
@@ -1183,6 +1240,12 @@ def transaction_proof(
         "reference": txn.reference,
         "description": txn.description,
         "amount": str(_txn_amount(txn)),
+        "status": txn.status.value,
+        "has_receipt": db.scalars(
+            select(Receipt.id).where(Receipt.transaction_id == txn.id)
+        ).first()
+        is not None,
+        "reversible": daily.approvals.can_reverse(txn),
         "seq": seal.seq,
         "sealed_at": seal.sealed_at,
         "payload_hash": seal.payload_hash,

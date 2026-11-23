@@ -30,11 +30,76 @@ export function onSessionExpired(cb: () => void) {
   onExpired = cb;
 }
 
+let onMustChange: (() => void) | null = null;
+
+export function onPasswordChangeRequired(cb: () => void) {
+  onMustChange = cb;
+}
+
 export interface Session {
   token: string;
   name: string;
   role: 'admin' | 'treasurer' | 'auditor' | 'committee';
   institution_slug: string;
+  institution?: string;
+  email?: string;
+  must_change_password?: boolean;
+}
+
+export function canApprove(role: Session['role'] | undefined): boolean {
+  return role === 'committee' || role === 'admin';
+}
+
+export function canSeeDonors(role: Session['role'] | undefined): boolean {
+  return role !== 'committee';
+}
+
+export interface Approval {
+  id: string;
+  kind: 'spend' | 'reversal';
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  amount: string;
+  fund_code: string | null;
+  purpose: string | null;
+  description: string;
+  target_reference: string | null;
+  result_reference: string | null;
+  requested_by: string | null;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  can_decide: boolean;
+  can_cancel: boolean;
+}
+
+export interface ReceiptInfo {
+  number: string;
+  institution: string;
+  reference: string;
+  donor_name: string | null;
+  amount: string;
+  fund_ms: string;
+  fund_en: string;
+  description: string;
+  issued_by: string | null;
+  issued_at: string;
+  valid: boolean;
+}
+
+export interface Person {
+  id: string;
+  name: string;
+  email: string | null;
+  role: Session['role'];
+  active: boolean;
+  must_change_password: boolean;
+}
+
+/** Sent with a form so a retry after a lost connection is recorded once. */
+export function newRequestId(): string {
+  const r = () => Math.random().toString(36).slice(2, 12);
+  return `${Date.now().toString(36)}-${r()}${r()}`;
 }
 
 export function canWrite(role: Session['role'] | undefined): boolean {
@@ -139,6 +204,9 @@ export interface Proof {
   prev_hash: string;
   chain_hash: string;
   intact: boolean;
+  status: Txn['status'];
+  has_receipt: boolean;
+  reversible: boolean;
   checks: Check[];
 }
 
@@ -182,14 +250,24 @@ export function liveSocketUrl(): string {
 export type Result<T> =
   | { ok: true; data: T }
   | { ok: false; refusal: RuleVerdict }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: string };
 
 function authHeaders(): Record<string, string> {
   return TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 }
 
+const OFFLINE = 'Tiada sambungan ke pelayan. Semak internet dan cuba lagi.';
+
+async function reach(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch {
+    throw new Error(OFFLINE);
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await reach(`${BASE_URL}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -207,11 +285,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const detail = body?.detail;
+    if (detail?.code === 'password_change_required') onMustChange?.();
     throw new Error(
       (typeof detail === 'string' ? detail : detail?.message_ms ?? detail?.message_en) ??
         `Request failed (${res.status})`,
     );
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -219,7 +299,7 @@ export async function login(email: string, password: string): Promise<Session> {
   // The login endpoint takes form encoding, not JSON: it follows the OAuth2
   // password flow so FastAPI's own docs page can drive it too.
   const body = new URLSearchParams({ username: email, password });
-  const res = await fetch(`${BASE_URL}/auth/login`, {
+  const res = await reach(`${BASE_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
@@ -228,7 +308,9 @@ export async function login(email: string, password: string): Promise<Session> {
     throw new Error(
       res.status === 401
         ? 'E-mel atau kata laluan salah.'
-        : `Tidak dapat log masuk (${res.status})`,
+        : res.status === 429
+          ? 'Terlalu banyak cubaan. Cuba lagi selepas 15 minit.'
+          : `Tidak dapat log masuk (${res.status})`,
     );
   }
   const data = await res.json();
@@ -237,6 +319,8 @@ export async function login(email: string, password: string): Promise<Session> {
     name: data.name,
     role: data.role,
     institution_slug: data.institution_slug,
+    institution: data.institution,
+    must_change_password: data.must_change_password,
   };
   setSession(session.token, session.institution_slug);
   return session;
@@ -259,8 +343,66 @@ export const api = {
       body: JSON.stringify({ fund_code, purpose }),
     }),
 
-  donate: (body: { fund_code: string; amount: number; description: string }) =>
-    request<{ reference: string; balance: string }>(`/i/${SLUG}/donations`, {
+  approvals: (status?: Approval['status']) =>
+    request<Approval[]>(`/i/${SLUG}/approvals${status ? `?status=${status}` : ''}`),
+
+  requestSpend: (body: {
+    fund_code: string;
+    amount: string;
+    purpose: string;
+    description: string;
+    request_id: string;
+  }) =>
+    request<Approval>(`/i/${SLUG}/approvals`, { method: 'POST', body: JSON.stringify(body) }),
+
+  decide: (id: string, action: 'approve' | 'reject', note?: string) =>
+    request<Approval>(`/i/${SLUG}/approvals/${id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ action, note: note || null }),
+    }),
+
+  cancelApproval: (id: string) =>
+    request<Approval>(`/i/${SLUG}/approvals/${id}/cancel`, { method: 'POST' }),
+
+  requestReversal: (reference: string, reason: string) =>
+    request<Approval>(`/i/${SLUG}/transactions/${encodeURIComponent(reference)}/reversal`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  receipt: (reference: string) =>
+    request<ReceiptInfo>(`/i/${SLUG}/transactions/${encodeURIComponent(reference)}/receipt`),
+
+  people: () => request<Person[]>(`/i/${SLUG}/users`),
+
+  addPerson: (body: { name: string; email: string; role: Session['role'] }) =>
+    request<Person & { temporary_password: string }>(`/i/${SLUG}/users`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  changePerson: (id: string, body: { role?: Session['role']; active?: boolean }) =>
+    request<Person>(`/i/${SLUG}/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  resetPassword: (id: string) =>
+    request<{ temporary_password: string }>(`/i/${SLUG}/users/${id}/reset-password`, {
+      method: 'POST',
+    }),
+
+  changePassword: (current: string, next: string) =>
+    request<void>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current, new: next }),
+    }),
+
+  donate: (body: {
+    fund_code: string;
+    amount: string;
+    description: string;
+    donor_name?: string;
+    request_id: string;
+  }) =>
+    request<{ reference: string; balance: string; receipt_number: string }>(`/i/${SLUG}/donations`, {
       method: 'POST',
       body: JSON.stringify({ ...body, channel: 'dashboard' }),
     }),
@@ -268,15 +410,21 @@ export const api = {
   /** Returns a refusal instead of throwing, because a refusal is the feature. */
   async disburse(body: {
     fund_code: string;
-    amount: number;
+    amount: string;
     purpose: string;
     description: string;
+    request_id: string;
   }): Promise<Result<{ reference: string; balance: string }>> {
-    const res = await fetch(`${BASE_URL}/i/${SLUG}/disbursements`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await reach(`${BASE_URL}/i/${SLUG}/disbursements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      return { ok: false, error: OFFLINE };
+    }
     const payload = await res.json().catch(() => null);
 
     if (res.status === 401) {
@@ -298,7 +446,8 @@ export const api = {
     }
     return {
       ok: false,
-      error: payload?.detail?.message_en ?? `Could not post (${res.status})`,
+      code: payload?.detail?.code,
+      error: payload?.detail?.message_ms ?? `Tidak dapat merekod (${res.status})`,
     };
   },
 
@@ -363,9 +512,11 @@ export const api = {
 
   closeCount: (body: {
     device_serial?: string;
-    counted_total: number;
-    witness_count: number;
+    counted_total: string;
+    fund_code?: string;
+    witnesses: string[];
     note?: string;
+    request_id: string;
   }) =>
     request<CountResult>(`/i/${SLUG}/counts`, {
       method: 'POST',

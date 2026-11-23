@@ -9,7 +9,14 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { unregisterPush } from './push';
-import { login as apiLogin, onSessionExpired, setSession, Session } from './api/client';
+import {
+  api,
+  login as apiLogin,
+  onPasswordChangeRequired,
+  onSessionExpired,
+  setSession,
+  Session,
+} from './api/client';
 
 /**
  * Session state for the whole app.
@@ -24,6 +31,7 @@ interface Ctx {
   ready: boolean;
   signIn(email: string, password: string): Promise<void>;
   signOut(): Promise<void>;
+  changePassword(current: string, next: string): Promise<void>;
 }
 
 const SessionContext = createContext<Ctx>({
@@ -31,6 +39,7 @@ const SessionContext = createContext<Ctx>({
   ready: false,
   async signIn() {},
   async signOut() {},
+  async changePassword() {},
 });
 
 const STORE_KEY = 'amanahtrack.session';
@@ -67,17 +76,32 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     onSessionExpired(() => {
       signOut();
     });
+    onPasswordChangeRequired(() => {
+      setSessionState((s) => (s ? { ...s, must_change_password: true } : s));
+    });
   }, [signOut]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const s = await apiLogin(email, password);
+    const s = { ...(await apiLogin(email, password)), email };
     setSessionState(s);
     await AsyncStorage.setItem(STORE_KEY, JSON.stringify(s)).catch(() => {});
   }, []);
 
+  const changePassword = useCallback(async (current: string, next: string) => {
+    const email = session?.email;
+    await api.changePassword(current, next);
+    // The server ended every sign-in, including this one.
+    if (!email) return signOut();
+    try {
+      await signIn(email, next);
+    } catch {
+      await signOut();
+    }
+  }, [session, signIn, signOut]);
+
   const value = useMemo(
-    () => ({ session, ready, signIn, signOut }),
-    [session, ready, signIn, signOut],
+    () => ({ session, ready, signIn, signOut, changePassword }),
+    [session, ready, signIn, signOut, changePassword],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

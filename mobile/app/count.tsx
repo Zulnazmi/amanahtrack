@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -9,7 +9,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { api, CountResult, Fund } from '../src/api/client';
+import { api, CountResult, DeviceStatus, Fund, newRequestId } from '../src/api/client';
+import { parseMoney } from '../src/format';
+import { Choices } from '../src/ui/Form';
 import { colors, radius, ringgit, space, type } from '../src/theme';
 
 /**
@@ -27,40 +29,63 @@ export default function CountScreen() {
   const router = useRouter();
   const [funds, setFunds] = useState<Fund[]>([]);
   const [counted, setCounted] = useState('');
-  const [witnesses, setWitnesses] = useState('2');
+  const [boxes, setBoxes] = useState<DeviceStatus[]>([]);
+  const [box, setBox] = useState<string | null>(null);
+  const [fund, setFund] = useState('');
+  const [names, setNames] = useState(['', '']);
+  const requestId = useRef(newRequestId());
   const [note, setNote] = useState('');
   const [result, setResult] = useState<CountResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.funds().then(setFunds);
+    Promise.all([api.funds(), api.devices()])
+      .then(([f, d]) => {
+        setFunds(f);
+        setBoxes(d);
+        if (d.length === 1) setBox(d[0].serial);
+        if (d.length === 0) setBox('');
+      })
+      .catch((e: Error) => setError(e.message));
   }, []);
 
   const cash = funds.find((f) => f.code === 'cash');
   const estimate = cash ? parseFloat(cash.provisional) : 0;
-  const typed = parseFloat(counted);
-  const preview = !isNaN(typed) ? typed - estimate : null;
+  const money = parseMoney(counted);
+  // The estimate covers every box, so it only means something with one.
+  const comparable = boxes.length === 1 && box === boxes[0].serial;
+  const preview = money && comparable ? Number(money) - estimate : null;
 
   async function submit() {
     setError(null);
-    if (isNaN(typed) || typed < 0) {
-      setError('Masukkan jumlah yang dikira.');
+    if (box === null) {
+      setError('Pilih tabung dahulu.');
       return;
     }
-    const w = parseInt(witnesses, 10);
-    if (isNaN(w) || w < 1) {
-      setError('Nyatakan bilangan saksi (sekurang-kurangnya 1).');
+    if (!money) {
+      setError('Masukkan jumlah yang sah, contohnya 1250.50.');
+      return;
+    }
+    const who = names.map((n) => n.trim()).filter(Boolean);
+    if (who.length < 2) {
+      setError('Masukkan nama sekurang-kurangnya dua saksi.');
+      return;
+    }
+    if (box === '' && !fund) {
+      setError('Pilih dana untuk wang ini.');
       return;
     }
     setBusy(true);
     try {
       setResult(
         await api.closeCount({
-          device_serial: 'BOX-002',
-          counted_total: typed,
-          witness_count: w,
+          device_serial: box || undefined,
+          fund_code: fund || undefined,
+          counted_total: money,
+          witnesses: who,
           note: note.trim() || undefined,
+          request_id: requestId.current,
         }),
       );
     } catch (e) {
@@ -118,13 +143,27 @@ export default function CountScreen() {
         masukkan jumlah sebenar di bawah.
       </Text>
 
-      <View style={c.estimateCard}>
+      {boxes.length > 0 && (
+        <>
+          <Text style={c.label}>Tabung</Text>
+          <Choices
+            value={box}
+            onChange={setBox}
+            options={[
+              ...boxes.map((b) => ({ value: b.serial, label: b.label })),
+              { value: '', label: 'Tanpa tabung pintar' },
+            ]}
+          />
+        </>
+      )}
+
+      {comparable && <View style={c.estimateCard}>
         <Text style={c.estimateLabel}>Anggaran daripada sensor</Text>
         <Text style={c.estimateValue}>{ringgit(estimate)}</Text>
         <Text style={c.estimateNote}>
           Anggaran berdasarkan berat dan bilangan kemasukan. Bukan jumlah muktamad.
         </Text>
-      </View>
+      </View>}
 
       <Text style={c.label}>Jumlah dikira (RM)</Text>
       <TextInput
@@ -143,13 +182,30 @@ export default function CountScreen() {
         </Text>
       )}
 
-      <Text style={c.label}>Bilangan saksi</Text>
-      <TextInput
-        style={c.input}
-        value={witnesses}
-        onChangeText={setWitnesses}
-        keyboardType="number-pad"
+      <Text style={c.label}>{box === '' ? 'Dana' : 'Dana (kosongkan untuk ikut tetapan tabung)'}</Text>
+      <Choices
+        value={fund}
+        onChange={(v) => setFund(v === fund ? '' : v)}
+        options={funds.filter((f) => f.code !== 'cash').map((f) => ({ value: f.code, label: f.label_ms }))}
       />
+
+      {names.map((n, i) => (
+        <View key={i}>
+          <Text style={c.label}>Nama saksi {i + 1}{i > 1 ? ' (pilihan)' : ''}</Text>
+          <TextInput
+            style={c.input}
+            value={n}
+            onChangeText={(v) => setNames(names.map((x, j) => (j === i ? v : x)))}
+            autoCapitalize="words"
+            accessibilityLabel={`Nama saksi ${i + 1}`}
+          />
+        </View>
+      ))}
+      {names.length < 5 && (
+        <Pressable onPress={() => setNames([...names, ''])} style={{ paddingVertical: space.md }}>
+          <Text style={c.preview}>+ Tambah saksi</Text>
+        </Pressable>
+      )}
 
       <Text style={c.label}>Catatan (pilihan)</Text>
       <TextInput
@@ -163,7 +219,7 @@ export default function CountScreen() {
 
       {error && <Text style={c.error}>{error}</Text>}
 
-      <Pressable style={c.submit} onPress={submit} disabled={busy}>
+      <Pressable style={[c.submit, busy && { opacity: 0.5 }]} onPress={submit} disabled={busy}>
         <Text style={c.submitText}>{busy ? 'Merekod…' : 'Sahkan kiraan'}</Text>
       </Pressable>
     </ScrollView>

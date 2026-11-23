@@ -36,6 +36,14 @@ def check_reversible(txn: Transaction) -> None:
         raise ApprovalError("Counted cash cannot be reversed. Record a new count instead.")
 
 
+def can_reverse(txn: Transaction) -> bool:
+    try:
+        check_reversible(txn)
+    except ApprovalError:
+        return False
+    return True
+
+
 def _duplicate(db, institution_id, request_id, **expected) -> Approval | None:
     if not request_id:
         return None

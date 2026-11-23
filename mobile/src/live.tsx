@@ -60,7 +60,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!session) {
+    if (!session || session.must_change_password) {
       setState(initial);
       return;
     }

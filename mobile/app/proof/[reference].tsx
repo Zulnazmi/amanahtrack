@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { api, Proof } from '../../src/api/client';
+import { api, canSeeDonors, canWrite, Proof } from '../../src/api/client';
+import { useSession } from '../../src/session';
+import { Button, Field, Notice } from '../../src/ui/Form';
 import { fullTime } from '../../src/format';
 import { colors, fonts, radius, ringgit } from '../../src/theme';
 import { CheckList, HashBlock } from '../../src/ui/Evidence';
@@ -15,6 +17,29 @@ export default function ProofScreen() {
   const [proof, setProof] = useState<Proof | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [run, setRun] = useState(0);
+  const router = useRouter();
+  const { session } = useSession();
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function askReversal() {
+    if (reason.trim().length < 5) {
+      setNotice({ ok: false, text: 'Terangkan sebab pembetulan (sekurang-kurangnya 5 aksara).' });
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.requestReversal(String(reference), reason.trim());
+      setAsking(false);
+      setNotice({ ok: true, text: 'Dihantar. Orang lain perlu meluluskan pembetulan ini.' });
+    } catch (e) {
+      setNotice({ ok: false, text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     setProof(null);
@@ -85,6 +110,29 @@ export default function ProofScreen() {
         </View>
         <Text style={s.formula}>seal = SHA-256( previous seal : content hash : entry number )</Text>
       </FadeUp>
+
+      <View style={{ gap: 12, marginTop: 24 }}>
+        {proof.has_receipt && canSeeDonors(session?.role) && (
+          <Button label="Lihat resit" quiet onPress={() => router.push(`/receipt/${proof.reference}`)} />
+        )}
+        {proof.reversible && canWrite(session?.role) && !asking && !notice?.ok && (
+          <Button label="Minta pembetulan" quiet onPress={() => setAsking(true)} />
+        )}
+        {asking && (
+          <>
+            <Field
+              label="Sebab pembetulan"
+              value={reason}
+              onChangeText={setReason}
+              placeholder="Contoh: jumlah tersilap taip"
+              multiline
+            />
+            <Button label="Hantar untuk kelulusan" busy={busy} onPress={askReversal} />
+            <Button label="Batal" quiet onPress={() => setAsking(false)} />
+          </>
+        )}
+        {notice && <Notice ok={notice.ok} text={notice.text} />}
+      </View>
 
       <PressScale onPress={() => setRun((n) => n + 1)} style={s.again}>
         <Text style={s.againText}>Verify again</Text>

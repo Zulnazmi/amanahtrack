@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -10,7 +10,8 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { api, Fund, RuleVerdict } from '../src/api/client';
+import { api, Fund, newRequestId, RuleVerdict } from '../src/api/client';
+import { parseMoney } from '../src/format';
 import { colors, radius, ringgit, space, type } from '../src/theme';
 
 /**
@@ -23,7 +24,7 @@ import { colors, radius, ringgit, space, type } from '../src/theme';
  * without offering a way forward just teaches people to work around you.
  */
 
-const PURPOSES: { code: string; label: string; group: string }[] = [
+export const PURPOSES: { code: string; label: string; group: string }[] = [
   { code: 'asnaf_fakir', label: 'Asnaf fakir', group: 'Asnaf' },
   { code: 'asnaf_miskin', label: 'Asnaf miskin', group: 'Asnaf' },
   { code: 'asnaf_amil', label: 'Asnaf amil', group: 'Asnaf' },
@@ -54,12 +55,16 @@ export default function SpendScreen() {
   const [posted, setPosted] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const [needsApproval, setNeedsApproval] = useState(false);
+  const [sent, setSent] = useState(false);
+  const requestId = useRef(newRequestId());
+
   useEffect(() => {
     api.funds().then((f) => {
       setFunds(f);
       const first = f.find((x) => x.code !== 'cash');
       if (!fundCode && first) setFundCode(first.code);
-    });
+    }).catch((e: Error) => setFormError(e.message));
   }, []);
 
   const runCheck = useCallback(async () => {
@@ -70,6 +75,9 @@ export default function SpendScreen() {
     setChecking(true);
     try {
       setVerdict(await api.checkSpend(fundCode, purpose));
+    } catch (e) {
+      setVerdict(null);
+      setFormError((e as Error).message);
     } finally {
       setChecking(false);
     }
@@ -81,7 +89,8 @@ export default function SpendScreen() {
 
   const selected = funds.find((f) => f.code === fundCode);
   const blocked = verdict !== null && !verdict.allowed;
-  const parsedAmount = parseFloat(amount);
+  const money = parseMoney(amount);
+  const parsedAmount = money ? Number(money) : 0;
   const overBalance =
     selected && parsedAmount > 0 && parsedAmount > parseFloat(selected.balance);
 
@@ -90,18 +99,31 @@ export default function SpendScreen() {
 
     if (!fundCode) return setFormError('Pilih dana dahulu.');
     if (!purpose) return setFormError('Pilih tujuan perbelanjaan.');
-    if (!parsedAmount || parsedAmount <= 0)
+    if (!money || parsedAmount <= 0)
       return setFormError('Masukkan jumlah yang sah.');
     if (!description.trim())
       return setFormError('Tulis keterangan ringkas untuk rekod AJK.');
 
     setSubmitting(true);
-    const result = await api.disburse({
+    const body = {
       fund_code: fundCode,
-      amount: parsedAmount,
+      amount: money,
       purpose,
       description: description.trim(),
-    });
+      request_id: requestId.current,
+    };
+    if (needsApproval) {
+      try {
+        await api.requestSpend(body);
+        setSent(true);
+      } catch (e) {
+        setFormError((e as Error).message);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+    const result = await api.disburse(body);
     setSubmitting(false);
 
     if (result.ok) {
@@ -109,9 +131,25 @@ export default function SpendScreen() {
       setTimeout(() => router.back(), 1400);
     } else if ('refusal' in result) {
       setVerdict(result.refusal);
+    } else if (result.code === 'approval_required') {
+      setNeedsApproval(true);
     } else {
       setFormError(result.error);
     }
+  }
+
+  if (sent) {
+    return (
+      <View style={[st.screen, st.centre, { padding: space.xl }]}>
+        <Text style={st.postedTitle}>Dihantar untuk kelulusan</Text>
+        <Text style={[st.postedNote, { textAlign: 'center' }]}>
+          Wang belum direkod keluar. Admin atau AJK lain perlu meluluskannya dahulu.
+        </Text>
+        <Pressable style={[st.submit, { alignSelf: 'stretch' }]} onPress={() => router.back()}>
+          <Text style={st.submitText}>Selesai</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   if (posted) {
@@ -237,6 +275,13 @@ export default function SpendScreen() {
         editable={!blocked}
       />
 
+      {needsApproval && (
+        <View style={st.okCard}>
+          <Text style={st.okText}>
+            Perbelanjaan ini perlu diluluskan oleh orang kedua. Semak butiran, kemudian hantar.
+          </Text>
+        </View>
+      )}
       {formError && <Text style={st.fieldError}>{formError}</Text>}
 
       <Pressable
@@ -245,7 +290,7 @@ export default function SpendScreen() {
         disabled={blocked || submitting}
       >
         <Text style={st.submitText}>
-          {submitting ? 'Merekod…' : 'Rekod perbelanjaan'}
+          {submitting ? 'Menghantar…' : needsApproval ? 'Hantar untuk kelulusan' : 'Rekod perbelanjaan'}
         </Text>
       </Pressable>
 

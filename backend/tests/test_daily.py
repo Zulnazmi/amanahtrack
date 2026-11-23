@@ -258,3 +258,30 @@ def test_count_records_witness_names(env):
 
 def test_purpose_codes_fit_the_column():
     assert max(len(p.value) for p in PurposeCode) <= 40
+
+
+def test_retried_count_and_spend_happen_once(env):
+    c, Session = env
+    t = login(c, "treasurer")
+    body = {"counted_total": "50", "fund_code": "sadaqah", "witnesses": ["Ali", "Siti"],
+            "request_id": "count-12345"}
+    first = c.post("/i/m/counts", headers=t, json=body)
+    assert first.status_code == 201 and c.post("/i/m/counts", headers=t, json=body).json() == first.json()
+    assert balance(c, t) == "50.00"
+    assert c.post("/i/m/counts", headers=t, json=body | {"counted_total": "60"}).status_code == 409
+    with Session() as db:
+        db.scalars(select(Institution).where(Institution.slug == "m")).one().approval_limit = None
+        db.commit()
+    spend = SPEND | {"request_id": "spend-12345"}
+    refs = {c.post("/i/m/disbursements", headers=t, json=spend).json()["reference"] for _ in range(2)}
+    assert len(refs) == 1 and balance(c, t) == "10.00"
+    assert c.post("/i/m/disbursements", headers=t, json=spend | {"amount": "1"}).status_code == 409
+
+
+def test_proof_says_what_can_be_done(env):
+    c, _ = env
+    t = login(c, "treasurer")
+    ref = give(c, t).json()["reference"]
+    p = c.get(f"/i/m/transactions/{ref}/proof", headers=t).json()
+    assert p["reversible"] and p["has_receipt"] and p["status"] == "confirmed"
+    assert c.post("/auth/login", data={"username": "admin@m.my", "password": PW}).json()["institution"] == "m"

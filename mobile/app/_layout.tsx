@@ -37,7 +37,10 @@ function Guard({ children }: { children: React.ReactNode }) {
     if (!ready) return;
     const onLogin = segments[0] === 'login';
     if (!session && !onLogin) router.replace('/login');
-    if (session && onLogin) router.replace('/');
+    if (!session) return;
+    if (session.must_change_password) {
+      if (segments[0] !== 'password') router.replace('/password');
+    } else if (onLogin) router.replace('/');
   }, [session, ready, segments, router]);
 
   if (!ready) {
@@ -62,6 +65,12 @@ export default function Layout() {
   });
   const [splashDone, setSplashDone] = useState(false);
   const finishSplash = useCallback(() => setSplashDone(true), []);
+
+  // A stalled animation must never keep somebody out of the app.
+  useEffect(() => {
+    const t = setTimeout(finishSplash, 5000);
+    return () => clearTimeout(t);
+  }, [finishSplash]);
 
   // Nothing is drawn until the fonts are in, so text never flashes in the
   // wrong typeface.
@@ -91,6 +100,11 @@ export default function Layout() {
               name="spend"
               options={{ title: 'Record spending', presentation: 'modal', animation: 'slide_from_bottom' }}
             />
+            <Stack.Screen name="donate" options={{ title: 'Rekod derma' }} />
+            <Stack.Screen name="approvals" options={{ title: 'Kelulusan' }} />
+            <Stack.Screen name="people" options={{ title: 'Pengguna' }} />
+            <Stack.Screen name="password" options={{ title: 'Kata laluan' }} />
+            <Stack.Screen name="receipt/[reference]" options={{ title: 'Resit' }} />
             <Stack.Screen name="count" options={{ title: 'Box count' }} />
             <Stack.Screen name="ledger" options={{ title: 'Ledger' }} />
             <Stack.Screen name="live" options={{ title: 'Live' }} />

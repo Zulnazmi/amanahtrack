@@ -29,3 +29,15 @@ export function fullTime(iso: string): string {
     minute: '2-digit',
   });
 }
+
+/**
+ * Turns what a person typed into an exact amount, or null.
+ *
+ * parseFloat reads "1,000" as 1, so it must never be used on typed money.
+ * The text goes to the server as is, without passing through floating point.
+ */
+export function parseMoney(typed: string): string | null {
+  const t = typed.trim().replace(/^rm\s*/i, '');
+  if (!/^(\d{1,9}|\d{1,3}(,\d{3}){1,2})(\.\d{1,2})?$/.test(t)) return null;
+  return t.replace(/,/g, '');
+}

@@ -322,6 +322,9 @@ class CountSession(Base):
     """A physical counting event that reconciles provisional device entries."""
 
     __tablename__ = "count_sessions"
+    __table_args__ = (
+        Index("ux_count_request", "institution_id", "request_id", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     institution_id: Mapped[str] = mapped_column(ForeignKey("institutions.id"))
@@ -333,6 +336,7 @@ class CountSession(Base):
     variance: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     witness_count: Mapped[int] = mapped_column(Integer, default=1)
     witness_names: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     counted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     closed_by: Mapped[str | None] = mapped_column(
