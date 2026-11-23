@@ -15,10 +15,13 @@ cd C:\amanahtrack\backend
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 $env:AMANAH_DATABASE_URL="DB_URL"
-python seed.py
-python set_device_secret.py
+$env:AMANAH_SECRET_KEY="<the same key you will use in Part 3>"
+python create_mosque.py
 ```
-set_device_secret.py prints a new box secret once. Write it down. It goes in the Pi.
+It asks for the mosque, the first admin and the box, then prints the box secret once.
+Write it down. It goes in the Pi. It never deletes anything.
+Do NOT run seed.py here. It erases the database, is for local demos only, and now
+refuses to run against a real one.
 
 ## Part 3. Backend (Render)
 1. Put the project on GitHub (private repo is fine). Do not commit amanahtrack.db or box.env.
@@ -48,4 +51,8 @@ App (laptop):
 - Free Render services sleep after 15 minutes without traffic. The box heartbeat every 30 seconds keeps it awake while the Pi is on. The first request after a sleep takes about a minute, so open the /docs page before a demo.
 - Only run one backend instance (the live feed keeps its connections in memory).
 - Photos are stored inside the database. Neon free gives 1 GB.
-- Change the demo user passwords before sharing the link with anyone.
+- The server will not start without a strong AMANAH_SECRET_KEY.
+- The server and the files in device/ must be updated together. Boxes running older
+  code are refused, because their messages could be replayed.
+- The Pi clock must be right to within 5 minutes. Raspberry Pi OS sets it from the
+  network. Events are kept and sent later if it is wrong.

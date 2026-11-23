@@ -5,6 +5,7 @@ import hashlib
 from datetime import timedelta
 
 import pytest
+from device_helpers import signed_post
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -105,7 +106,7 @@ def send(c, kind, photo=None, pulses=None, bad_sig=False):
     if photo:
         body["photo_b64"] = base64.b64encode(photo).decode()
         body["photo_sha256"] = sha
-    return c.post("/devices/telemetry", json=body, headers={"X-Device-Signature": sig})
+    return signed_post(c, "/devices/telemetry", body, SECRET, evidence=sig)
 
 
 def hdr(c, email="c@a.my"):
@@ -233,15 +234,11 @@ def test_box_alert_endpoint_also_lands_in_the_live_feed(env):
     c, _ = env
     sha = hashlib.sha256(PNG).hexdigest()
     sig = alert_service.device_signature("BOX-L", "unexplained_weight", sha, SECRET)
-    r = c.post(
-        "/devices/alerts",
-        json={
+    r = signed_post(c, "/devices/alerts", {
             "serial": "BOX-L",
             "kind": "unexplained_weight",
             "photo_b64": base64.b64encode(PNG).decode(),
             "photo_sha256": sha,
-        },
-        headers={"X-Device-Signature": sig},
-    )
+        }, SECRET, evidence=sig)
     assert r.status_code == 201
     assert c.get("/i/masjid-a/live/events", headers=hdr(c)).json()[0]["kind"] == "unexplained_weight"

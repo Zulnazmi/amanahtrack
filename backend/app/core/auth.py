@@ -24,11 +24,11 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import config
 from app.models import Institution, Role, User
 
-# In production this must come from the environment. The fallback exists so a
-# fresh clone runs without configuration, and is deliberately obvious.
-SECRET_KEY = os.getenv("AMANAH_SECRET_KEY", "dev-only-change-me-before-deploy")
+# Development falls back to a known key. Production refuses to start without one.
+SECRET_KEY = config.secret_key()
 ALGORITHM = "HS256"
 TOKEN_TTL_HOURS = int(os.getenv("AMANAH_TOKEN_TTL_HOURS", "12"))
 
@@ -59,6 +59,9 @@ def create_token(user: User) -> str:
 def authenticate(db: Session, email: str, password: str) -> User | None:
     user = db.scalars(select(User).where(User.email == email)).first()
     if user is None or not user.active or not user.password_hash:
+        # Spend the same time as a real check, so a quick answer does not
+        # reveal that the account does not exist.
+        pwd_context.dummy_verify()
         return None
     if not verify_password(password, user.password_hash):
         return None

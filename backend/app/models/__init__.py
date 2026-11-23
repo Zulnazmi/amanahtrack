@@ -215,6 +215,17 @@ class Device(Base):
     offline_alerted: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class DeviceMessage(Base):
+    """An event id a box has already used, so it cannot be used again."""
+
+    __tablename__ = "device_messages"
+    __table_args__ = (Index("ix_device_message_expires", "expires_at"),)
+
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Transaction(Base):
     """One financial event. Balanced by its entries."""
 

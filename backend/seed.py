@@ -5,7 +5,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from app.core import auth
+from app.core import auth, config
 from app.core.fiqh import FundCategory, PurposeCode
 from app.main import Base, SessionLocal, engine
 from app.models import (
@@ -129,6 +129,12 @@ def seed_alerts(db, inst, device):
 
 
 def run():
+    # This ERASES everything and creates accounts with a public password.
+    if config.is_production():
+        raise SystemExit(
+            "seed.py erases the database and is for local demos only. "
+            "For a real mosque use: python create_mosque.py"
+        )
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     db = SessionLocal()

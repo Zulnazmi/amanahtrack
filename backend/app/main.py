@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import hmac
 import os
 from contextlib import asynccontextmanager
@@ -26,7 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core import auth
+from app.core import auth, config, throttle
 from app.core.auth import assert_same_institution, require_roles
 from app.core.fiqh import FUND_RULES, FundCategory, PurposeCode, rule_for
 from app.models import (
@@ -49,7 +48,7 @@ from app.models import (
     TxnStatus,
 )
 from app.services import alerts as alert_service
-from app.services import ledger, sealing, telemetry
+from app.services import device_auth, ledger, sealing, telemetry
 from app.services import push as push_service
 from app.services.live import hub
 from app.services.ledger import FundRuleViolation, InsufficientBalance, LedgerError
@@ -110,6 +109,7 @@ async def _sweeper():
         try:
             with SessionLocal() as db:
                 batches = telemetry.sweep(db)
+                device_auth.purge(db)
                 db.commit()
             for inst_id, messages in batches:
                 for m in messages:
@@ -139,7 +139,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -273,8 +273,14 @@ def login(
     form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
 ):
     """Sign in. Username field carries the email."""
+    if throttle.blocked(form.username):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts. Try again in 15 minutes.",
+        )
     user = auth.authenticate(db, form.username, form.password)
     if user is None:
+        throttle.failed(form.username)
         # Same message for unknown email and wrong password, so the endpoint
         # cannot be used to discover which accounts exist.
         raise HTTPException(
@@ -282,6 +288,7 @@ def login(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    throttle.succeeded(form.username)
     inst = db.get(Institution, user.institution_id)
     return LoginOut(
         access_token=auth.create_token(user),
@@ -300,6 +307,27 @@ def whoami(user: User = Depends(current_user), db: Session = Depends(get_db)):
         "institution": inst.name,
         "institution_slug": inst.slug,
     }
+
+
+class ChangePasswordIn(BaseModel):
+    current: str
+    # bcrypt only reads the first 72 bytes
+    new: str = Field(min_length=10, max_length=72)
+
+
+@app.post("/auth/change-password", status_code=204)
+def change_password(
+    body: ChangePasswordIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if throttle.blocked(user.email or user.id):
+        raise HTTPException(429, "Too many attempts. Try again in 15 minutes.")
+    if not auth.verify_password(body.current, user.password_hash or ""):
+        throttle.failed(user.email or user.id)
+        raise HTTPException(403, "Current password is incorrect")
+    user.password_hash = auth.hash_password(body.new)
+    db.commit()
 
 
 @app.get("/health")
@@ -479,7 +507,7 @@ def create_disbursement(
 @app.post("/devices/events", status_code=202)
 def ingest_device_event(
     body: DeviceEventIn,
-    x_device_signature: str = Header(default=""),
+    envelope: device_auth.Envelope = Depends(device_auth.envelope),
     db: Session = Depends(get_db),
 ):
     """Signed events from a sensor box.
@@ -487,16 +515,9 @@ def ingest_device_event(
     Lands as PROVISIONAL. The box has an opinion about what went in; it does
     not get to assert a balance. Only a witnessed count promotes it.
     """
-    device = db.scalars(select(Device).where(Device.serial == body.serial)).first()
-    if device is None or not device.active:
-        raise HTTPException(404, "Unknown or inactive device")
-
-    signed = f"{body.serial}:{body.event_type}:{body.estimated_amount or ''}"
-    expected = hmac.new(
-        device.shared_secret.encode(), signed.encode(), hashlib.sha256
-    ).hexdigest()
-    if not hmac.compare_digest(expected, x_device_signature):
-        raise HTTPException(401, "Bad device signature")
+    device = device_auth.authenticate(db, envelope, body.serial)
+    if device is None:
+        return {"accepted": True, "recorded": False, "duplicate": True}
 
     device.last_seen_at = datetime.now(timezone.utc)
 
@@ -507,20 +528,24 @@ def ingest_device_event(
     if device.default_fund_id is None:
         raise HTTPException(409, "Device has no default fund configured")
 
-    txn = ledger.record_donation(
-        db,
-        institution_id=device.institution_id,
-        fund_id=device.default_fund_id,
-        cash_fund_id=get_fund(
-            db, db.get(Institution, device.institution_id), "cash"
-        ).id,
-        amount=body.estimated_amount,
-        description=f"Sensor insertion, {device.label}",
-        channel=Channel.DEVICE,
-        status=TxnStatus.PROVISIONAL,
-        device_id=device.id,
-        confidence=body.confidence,
-    )
+    try:
+        txn = ledger.record_donation(
+            db,
+            institution_id=device.institution_id,
+            fund_id=device.default_fund_id,
+            cash_fund_id=get_fund(
+                db, db.get(Institution, device.institution_id), "cash"
+            ).id,
+            amount=body.estimated_amount,
+            description=f"Sensor insertion, {device.label}",
+            channel=Channel.DEVICE,
+            status=TxnStatus.PROVISIONAL,
+            device_id=device.id,
+            confidence=body.confidence,
+        )
+    except LedgerError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc))
     db.commit()
     return {"accepted": True, "recorded": True, "reference": txn.reference}
 
@@ -529,6 +554,7 @@ def ingest_device_event(
 async def ingest_telemetry(
     body: TelemetryIn,
     x_device_signature: str = Header(default=""),
+    envelope: device_auth.Envelope = Depends(device_auth.envelope),
     db: Session = Depends(get_db),
 ):
     """Live sensor events from a box: door, vibration, heartbeat.
@@ -538,14 +564,16 @@ async def ingest_telemetry(
     """
     if body.kind not in telemetry.EVENT_KINDS:
         raise HTTPException(422, f"Unknown event kind '{body.kind}'")
-    device = db.scalars(select(Device).where(Device.serial == body.serial)).first()
-    if device is None or not device.active:
-        raise HTTPException(404, "Unknown or inactive device")
+    device = device_auth.authenticate(
+        db, envelope, body.serial, heartbeat=body.kind == "heartbeat"
+    )
+    if device is None:
+        return {"accepted": True, "duplicate": True}
 
     expected = alert_service.device_signature(
         body.serial, body.kind, body.photo_sha256, device.shared_secret
     )
-    if not hmac.compare_digest(expected, x_device_signature):
+    if not hmac.compare_digest(expected.encode(), x_device_signature.encode()):
         raise HTTPException(401, "Bad device signature")
 
     photo = None
@@ -599,6 +627,7 @@ _ALERT_COPY = {
 async def ingest_device_alert(
     body: DeviceAlertIn,
     x_device_signature: str = Header(default=""),
+    envelope: device_auth.Envelope = Depends(device_auth.envelope),
     db: Session = Depends(get_db),
 ):
     """Signed alert from a box, optionally with a photo.
@@ -606,16 +635,16 @@ async def ingest_device_alert(
     The signature covers the SHA-256 of the photo, so the picture is bound to
     the box that claims to have taken it.
     """
-    device = db.scalars(select(Device).where(Device.serial == body.serial)).first()
-    if device is None or not device.active:
-        raise HTTPException(404, "Unknown or inactive device")
+    device = device_auth.authenticate(db, envelope, body.serial)
+    if device is None:
+        return {"accepted": True, "duplicate": True}
     if body.kind not in _ALERT_COPY:
         raise HTTPException(422, "A box cannot raise this kind of alert")
 
     expected = alert_service.device_signature(
         body.serial, body.kind.value, body.photo_sha256, device.shared_secret
     )
-    if not hmac.compare_digest(expected, x_device_signature):
+    if not hmac.compare_digest(expected.encode(), x_device_signature.encode()):
         raise HTTPException(401, "Bad device signature")
 
     photo = None

@@ -21,10 +21,11 @@ see [LICENSE](LICENSE).
 | REST API | working |
 | Mobile app (alerts, photo evidence, verify, per-entry proof) | working |
 | Box client (Raspberry Pi 5) | runs in simulation mode and posts signed events |
-| Live sensor streaming, push notifications, cloud deployment | not built |
+| Live sensor feed and push notifications | built, tested against simulated boxes |
+| Cloud deployment | guide in CLOUD_SETUP.md, not yet run in production |
 | Load-cell coin estimator | written, not tested on real hardware |
 
-37 tests pass. In the demo the box readings and alert photos are
+81 tests pass. In the demo the box readings and alert photos are
 **simulated**. The gaps are listed honestly because a demo that hides them
 falls apart under a judge's questions.
 
@@ -33,6 +34,8 @@ falls apart under a judge's questions.
 - **Tamper-evident records.** Ledger entries and alerts are sealed into a
   SHA-256 hash chain. Verification reports the exact entry where a change
   occurred, and re-sealing an edited alert is still caught by the next one.
+- **No replays.** Every box message carries a time and a one-time id, and the
+  signature covers the whole message. A captured message cannot be reused.
 - **Device authenticity.** The box signs events with HMAC-SHA256. The server
   recomputes the photo hash and re-verifies the signature; bad signatures
   return 401 and non-image uploads are rejected.
@@ -43,9 +46,9 @@ falls apart under a judge's questions.
 Not measured, and not claimed: coin-estimator accuracy, performance figures,
 or any formal penetration test.
 
-> **Secrets.** `AMANAH_SECRET_KEY` has a dev-only fallback and must be set
-> from the environment in any real deployment. The device secret in
-> `seed.py` is a demo value; rotate it with `set_device_secret.py`.
+> **Secrets.** In production the server refuses to start without a strong
+> `AMANAH_SECRET_KEY`. `seed.py` is for local demos only; set up a real
+> mosque with `create_mosque.py`.
 
 ## Running the backend
 
@@ -59,7 +62,7 @@ uvicorn app.main:app --reload
 Open http://localhost:8000/docs for the interactive API.
 
 ```bash
-pytest -q               # 37 tests
+pytest -q               # 81 tests
 ```
 
 ## Running the mobile app
@@ -112,10 +115,9 @@ human count promotes an estimate into the ledger proper.
 
 Nothing here should be deployed as-is. In rough order:
 
-- **Production secrets and deployment.** Keys must come from the
-  environment, and there is no cloud deployment yet.
-- **Real-time sensing.** Live door, vibration and camera streaming into the
-  app is designed but not built, and push notifications are missing.
+- **Deployment.** The cloud setup has not been run in production yet.
+- **Known integrity gaps.** Transaction status is not sealed, and no copy of
+  the latest hash is kept outside the database.
 - **PostgreSQL.** SQLite is fine for development and wrong for concurrent
   writes from a bot, a dashboard, and several boxes at once.
 - **Offline sync.** Rural suraus lose connectivity. The client currently

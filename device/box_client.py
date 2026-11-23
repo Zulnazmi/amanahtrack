@@ -44,6 +44,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 import zlib
 from collections import deque
 from decimal import Decimal, ROUND_HALF_UP
@@ -135,17 +136,6 @@ def sen_to_ringgit(sen: float) -> str:
 # -------------------------------------------------------------------- signing
 
 
-def sign(serial: str, event_type: str, amount: str | None, secret: str) -> str:
-    """Must match the server byte for byte.
-
-    The server signs f"{serial}:{event_type}:{amount or ''}" where amount is
-    the str() of a Decimal. Send the amount as a two decimal string and sign
-    that same string, so both sides agree on the text.
-    """
-    message = f"{serial}:{event_type}:{amount or ''}"
-    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
-
-
 def sign_alert(serial: str, kind: str, photo_sha256: str | None, secret: str) -> str:
     """Alerts sign the SHA-256 of the photo, which binds the picture to this box."""
     message = f"{serial}:alert:{kind}:{photo_sha256 or ''}"
@@ -226,9 +216,21 @@ class PostResult:
     REJECTED = "rejected"  # server said no: retrying will not help
 
 
+def sign_request(path: str, timestamp: str, event_id: str, body: bytes) -> str:
+    """Covers everything in the message, so nothing can be changed or replayed.
+
+    Must match backend/app/services/device_auth.py byte for byte.
+    """
+    digest = hashlib.sha256(body).hexdigest()
+    message = f"v2\n{path}\n{timestamp}\n{event_id}\n{digest}"
+    return hmac.new(SECRET.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
 def post_event(event: dict) -> str:
+    # Set once and saved with the event, so a retry is recognised as a retry.
+    event_id = event.setdefault("event_id", uuid.uuid4().hex)
     if event["event_type"] == "alert":
-        url = f"{API_URL}/devices/alerts"
+        path = "/devices/alerts"
         body = {
             "serial": SERIAL,
             "kind": event["kind"],
@@ -238,7 +240,7 @@ def post_event(event: dict) -> str:
         }
         signature = sign_alert(SERIAL, event["kind"], event.get("photo_sha256"), SECRET)
     elif event["event_type"] == "telemetry":
-        url = f"{API_URL}/devices/telemetry"
+        path = "/devices/telemetry"
         body = {
             "serial": SERIAL,
             "kind": event["kind"],
@@ -251,25 +253,36 @@ def post_event(event: dict) -> str:
         signature = sign_alert(SERIAL, event["kind"], event.get("photo_sha256"), SECRET)
     else:
         amount = event.get("estimated_amount")
-        url = f"{API_URL}/devices/events"
+        path = "/devices/events"
         body = {
             "serial": SERIAL,
             "event_type": event["event_type"],
             "estimated_amount": amount,
             "confidence": event.get("confidence"),
         }
-        signature = sign(SERIAL, event["event_type"], amount, SECRET)
+        signature = ""  # the request signature covers it
+    data = json.dumps(body).encode()
+    timestamp = str(int(time.time()))
     request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "X-Device-Signature": signature},
+        f"{API_URL.rstrip('/')}{path}",
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "X-Device-Signature": signature,
+            "X-Device-Timestamp": timestamp,
+            "X-Device-Event-Id": event_id,
+            "X-Device-Request-Signature": sign_request(path, timestamp, event_id, data),
+        },
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=8) as resp:
             return PostResult.OK if 200 <= resp.status < 300 else PostResult.RETRY
     except urllib.error.HTTPError as err:
-        if err.code >= 500:
+        # A wrong clock or key is a fault on our side that can be fixed. Keep
+        # the event: throwing away evidence is worse than sending it late.
+        if err.code >= 500 or err.code in (401, 408, 429):
+            print(f"  server answered {err.code}, keeping the event")
             return PostResult.RETRY
         print(f"  server rejected event ({err.code}): {err.read().decode()[:160]}")
         return PostResult.REJECTED
@@ -304,6 +317,8 @@ def deliver(event: dict) -> bool:
     """Send an event, or queue it. Returns True if the server took it now."""
     if flush_queue() == 0 and post_event(event) in (PostResult.OK, PostResult.REJECTED):
         return True
+    if event.get("kind") == "heartbeat":
+        return False  # "I am alive" is only true now, never later
     queue_event(event)
     print("  offline, saved to queue")
     return False

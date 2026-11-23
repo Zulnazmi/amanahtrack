@@ -4,6 +4,7 @@ import base64
 import hashlib
 
 import pytest
+from device_helpers import signed_post
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -118,7 +119,7 @@ def post_alert(c, kind="unexplained_weight", photo=PNG, bad_sig=False, sha=None)
     if photo:
         body["photo_b64"] = base64.b64encode(photo).decode()
         body["photo_sha256"] = sha
-    return c.post("/devices/alerts", json=body, headers={"X-Device-Signature": sig})
+    return signed_post(c, "/devices/alerts", body, SECRET, evidence=sig)
 
 
 def test_device_alert_with_photo_is_stored_and_verifies(env):
@@ -157,15 +158,17 @@ def test_signed_but_wrong_hash_is_rejected(env):
     c, _, _ = env
     sha = "b" * 64
     sig = alert_service.device_signature("BOX-T", "unexplained_weight", sha, SECRET)
-    r = c.post(
+    r = signed_post(
+        c,
         "/devices/alerts",
-        json={
+        {
             "serial": "BOX-T",
             "kind": "unexplained_weight",
             "photo_b64": base64.b64encode(PNG).decode(),
             "photo_sha256": sha,
         },
-        headers={"X-Device-Signature": sig},
+        SECRET,
+        evidence=sig,
     )
     assert r.status_code == 422
 
