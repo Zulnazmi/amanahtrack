@@ -21,7 +21,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core import config
@@ -51,13 +51,14 @@ def create_token(user: User) -> str:
         "inst": user.institution_id,
         "role": user.role.value,
         "name": user.name,
+        "ver": user.token_version or 0,
         "exp": expires,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def authenticate(db: Session, email: str, password: str) -> User | None:
-    user = db.scalars(select(User).where(User.email == email)).first()
+    user = db.scalars(select(User).where(func.lower(User.email) == email.strip().lower())).first()
     if user is None or not user.active or not user.password_hash:
         # Spend the same time as a real check, so a quick answer does not
         # reveal that the account does not exist.
@@ -91,7 +92,22 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = None) ->
     user = db.get(User, user_id)
     if user is None or not user.active:
         raise credentials_error
+    if payload.get("ver", 0) != user.token_version:
+        raise credentials_error
     return user
+
+
+def assert_own_password(user: User) -> None:
+    """Somebody else knows a temporary password, so it opens nothing else."""
+    if user.must_change_password:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "password_change_required",
+                "message_en": "Choose your own password first.",
+                "message_ms": "Sila tetapkan kata laluan anda dahulu.",
+            },
+        )
 
 
 def require_roles(*allowed: Role):

@@ -393,6 +393,11 @@ def reverse(
     correction.reverses_id = txn.id
     txn.status = TxnStatus.VOID
     db.flush()
+    # Undoing a donation that has already been spent would leave the fund owing.
+    for leg in flipped:
+        balance = fund_balance(db, leg.fund_id)
+        if balance < 0:
+            raise InsufficientBalance(db.get(Fund, leg.fund_id), balance)
     return correction
 
 
@@ -451,6 +456,7 @@ def close_count(
     counted_total,
     cash_fund_id: str,
     witness_count: int = 1,
+    witness_names: str | None = None,
     note: str | None = None,
     closed_by: str | None = None,
     target_fund_id: str | None = None,
@@ -527,6 +533,7 @@ def close_count(
         estimated_total=estimated,
         variance=variance,
         witness_count=witness_count,
+        witness_names=witness_names,
         note=note,
         closed_by=closed_by,
     )

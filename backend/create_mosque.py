@@ -43,7 +43,8 @@ def create(db, *, name, slug, state, admin_name, email, password, serial, box_la
         if db.scalars(select(model).where(column == value)).first():
             raise ValueError(f"{what} is already used")
 
-    inst = Institution(name=name, slug=slug, state=state, public_page_enabled=False)
+    inst = Institution(name=name, slug=slug, state=state, public_page_enabled=False,
+                       approval_limit=0)  # every spend needs two people
     db.add(inst)
     db.flush()
     funds = {}

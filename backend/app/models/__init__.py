@@ -115,6 +115,8 @@ class Institution(Base):
     slug: Mapped[str] = mapped_column(String(80), unique=True)
     state: Mapped[str | None] = mapped_column(String(40), nullable=True)
     public_page_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Spending above this needs a second person. 0 means always, None means never.
+    approval_limit: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     funds: Mapped[list["Fund"]] = relationship(back_populates="institution")
@@ -131,6 +133,9 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
     telegram_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     role: Mapped[Role] = mapped_column(SAEnum(Role), default=Role.COMMITTEE)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Raising this signs the person out on every phone.
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -232,6 +237,7 @@ class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
         Index("ix_txn_institution_date", "institution_id", "occurred_at"),
+        Index("ux_txn_request", "institution_id", "request_id", unique=True),
         UniqueConstraint("institution_id", "seq"),
     )
 
@@ -261,6 +267,9 @@ class Transaction(Base):
     reverses_id: Mapped[str | None] = mapped_column(
         ForeignKey("transactions.id"), nullable=True
     )
+
+    # Chosen by the app, so a double tap or a retry is recorded once.
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     entries: Mapped[list["Entry"]] = relationship(
         back_populates="transaction", cascade="all, delete-orphan"
@@ -323,6 +332,7 @@ class CountSession(Base):
     estimated_total: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     variance: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     witness_count: Mapped[int] = mapped_column(Integer, default=1)
+    witness_names: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     counted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     closed_by: Mapped[str | None] = mapped_column(
@@ -406,4 +416,72 @@ class DeviceEvent(Base):
     detail: Mapped[str] = mapped_column(Text, default="")
     alert_id: Mapped[str | None] = mapped_column(ForeignKey("alerts.id"), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Approval(Base):
+    """A spend or reversal waiting for, or decided by, a second person."""
+
+    __tablename__ = "approvals"
+    __table_args__ = (
+        Index("ix_approval_status", "institution_id", "status"),
+        Index("ux_approval_request", "institution_id", "request_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    institution_id: Mapped[str] = mapped_column(ForeignKey("institutions.id"))
+    kind: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fund_id: Mapped[str | None] = mapped_column(ForeignKey("funds.id"), nullable=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    purpose: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    description: Mapped[str] = mapped_column(Text)
+    target_id: Mapped[str | None] = mapped_column(
+        ForeignKey("transactions.id"), nullable=True
+    )
+    requested_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    decided_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_id: Mapped[str | None] = mapped_column(
+        ForeignKey("transactions.id"), nullable=True
+    )
+
+
+class Receipt(Base):
+    """Kept apart from the sealed entry so a donor name can be removed if asked."""
+
+    __tablename__ = "receipts"
+    __table_args__ = (UniqueConstraint("institution_id", "seq"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    institution_id: Mapped[str] = mapped_column(ForeignKey("institutions.id"))
+    seq: Mapped[int] = mapped_column(Integer)
+    transaction_id: Mapped[str] = mapped_column(
+        ForeignKey("transactions.id"), unique=True
+    )
+    donor_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    issued_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    @property
+    def number(self) -> str:
+        return f"R-{self.seq:06d}"
+
+
+class AuditLog(Base):
+    """Who changed whose access."""
+
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_inst_time", "institution_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    institution_id: Mapped[str] = mapped_column(ForeignKey("institutions.id"))
+    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(40))
+    detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

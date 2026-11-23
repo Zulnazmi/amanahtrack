@@ -43,6 +43,7 @@ from app.models import (
     DeviceEvent,
     Fund,
     PushToken,
+    Receipt,
     Institution,
     Transaction,
     TxnStatus,
@@ -75,10 +76,16 @@ def get_db():
         db.close()
 
 
-def current_user(
+def signed_in(
     token: str = Depends(auth.oauth2_scheme), db: Session = Depends(get_db)
 ) -> User:
+    """Signed in, possibly with a temporary password."""
     return auth.get_current_user(token=token, db=db)
+
+
+def current_user(user: User = Depends(signed_in)) -> User:
+    auth.assert_own_password(user)
+    return user
 
 
 def treasurer_or_admin(user: User = Depends(current_user)) -> User:
@@ -173,9 +180,12 @@ class FundOut(BaseModel):
 
 class DonationIn(BaseModel):
     fund_code: str
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, lt=Decimal("1e12"))
     description: str
     channel: Channel = Channel.DASHBOARD
+    # Optional, and never part of the sealed entry
+    donor_name: str | None = Field(default=None, max_length=120)
+    request_id: str | None = Field(default=None, min_length=8, max_length=64)
 
 
 class DisbursementIn(BaseModel):
@@ -227,6 +237,7 @@ class CountIn(BaseModel):
     counted_total: Decimal = Field(ge=0)
     fund_code: str | None = None
     witness_count: int = Field(default=1, ge=1)
+    witnesses: list[str] = Field(default=[], max_length=10)
     note: str | None = None
 
 
@@ -277,6 +288,7 @@ class LoginOut(BaseModel):
     name: str
     role: Role
     institution_slug: str
+    must_change_password: bool = False
 
 
 @app.post("/auth/login", response_model=LoginOut)
@@ -306,15 +318,17 @@ def login(
         name=user.name,
         role=user.role,
         institution_slug=inst.slug,
+        must_change_password=user.must_change_password,
     )
 
 
 @app.get("/auth/me")
-def whoami(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def whoami(user: User = Depends(signed_in), db: Session = Depends(get_db)):
     inst = db.get(Institution, user.institution_id)
     return {
         "name": user.name,
         "role": user.role.value,
+        "must_change_password": user.must_change_password,
         "institution": inst.name,
         "institution_slug": inst.slug,
     }
@@ -330,14 +344,18 @@ class ChangePasswordIn(BaseModel):
 def change_password(
     body: ChangePasswordIn,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(signed_in),
 ):
     if throttle.blocked(user.email or user.id):
         raise HTTPException(429, "Too many attempts. Try again in 15 minutes.")
     if not auth.verify_password(body.current, user.password_hash or ""):
         throttle.failed(user.email or user.id)
         raise HTTPException(403, "Current password is incorrect")
+    if body.new == body.current:
+        raise HTTPException(422, "Choose a different password")
     user.password_hash = auth.hash_password(body.new)
+    user.must_change_password = False
+    user.token_version += 1  # every phone signs in again
     db.commit()
 
 
@@ -428,6 +446,38 @@ def check_spend(
     }
 
 
+def _donation_out(db: Session, txn: Transaction, fund: Fund) -> dict:
+    r = db.scalars(select(Receipt).where(Receipt.transaction_id == txn.id)).first()
+    return {
+        "reference": txn.reference,
+        "fund": fund.code,
+        "amount": str(_txn_amount(txn)),
+        "balance": str(ledger.fund_balance(db, fund.id)),
+        "receipt_number": r.number if r else None,
+    }
+
+
+def spend_refusal(exc: FundRuleViolation | InsufficientBalance) -> HTTPException:
+    if isinstance(exc, FundRuleViolation):
+        return HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": exc.verdict.code,
+                "message_en": exc.verdict.message_en,
+                "message_ms": exc.verdict.message_ms,
+                "suggested_funds": [f.value for f in exc.verdict.suggested_funds],
+            },
+        )
+    return HTTPException(
+        status.HTTP_409_CONFLICT,
+        detail={
+            "code": "insufficient_fund_balance",
+            "message_en": str(exc),
+            "message_ms": f"Baki {exc.fund.label_ms} hanya {exc.balance}.",
+        },
+    )
+
+
 @app.post("/i/{slug}/donations", status_code=201)
 def create_donation(
     slug: str,
@@ -438,6 +488,26 @@ def create_donation(
     inst = get_institution(db, slug)
     assert_same_institution(user, inst)
     fund = get_fund(db, inst, body.fund_code)
+    if body.channel is Channel.DEVICE:
+        raise HTTPException(422, "Only a box can record a box donation")
+    ledger.lock_books(db, inst.id)
+    if body.request_id:
+        again = db.scalars(
+            select(Transaction).where(
+                Transaction.institution_id == inst.id,
+                Transaction.request_id == body.request_id,
+            )
+        ).first()
+        if again is not None:
+            same = (
+                _txn_amount(again) == ledger.money(body.amount)
+                and again.description == body.description
+                and again.recorded_by == user.id
+                and any(e.fund_id == fund.id for e in again.entries)
+            )
+            if not same:
+                raise HTTPException(409, "This request id was already used")
+            return _donation_out(db, again, fund)
     try:
         txn = ledger.record_donation(
             db,
@@ -452,13 +522,18 @@ def create_donation(
     except LedgerError as exc:
         db.rollback()
         raise HTTPException(400, str(exc))
+    txn.request_id = body.request_id
+    db.add(
+        Receipt(
+            institution_id=inst.id,
+            seq=ledger._next_seq(db, inst.id, Receipt),
+            transaction_id=txn.id,
+            donor_name=(body.donor_name or "").strip() or None,
+            issued_by=user.id,
+        )
+    )
     db.commit()
-    return {
-        "reference": txn.reference,
-        "fund": fund.code,
-        "amount": str(ledger.money(body.amount)),
-        "balance": str(ledger.fund_balance(db, fund.id)),
-    }
+    return _donation_out(db, txn, fund)
 
 
 @app.post("/i/{slug}/disbursements", status_code=201)
@@ -472,6 +547,20 @@ def create_disbursement(
     inst = get_institution(db, slug)
     assert_same_institution(user, inst)
     fund = get_fund(db, inst, body.fund_code)
+    limit = inst.approval_limit
+    if limit is not None and ledger.money(body.amount) > limit:
+        # A forbidden purpose should say so, not send someone to wait for approval
+        verdict = ledger.check_spend(fund, body.purpose)
+        if not verdict:
+            raise spend_refusal(FundRuleViolation(verdict))
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "approval_required",
+                "message_en": "A second person must approve this spending.",
+                "message_ms": "Perbelanjaan ini perlu diluluskan oleh orang kedua.",
+            },
+        )
 
     try:
         txn = ledger.record_disbursement(
@@ -484,25 +573,10 @@ def create_disbursement(
             description=body.description,
             recorded_by=user.id,
         )
-    except FundRuleViolation as exc:
+    except (FundRuleViolation, InsufficientBalance) as exc:
+        error = spend_refusal(exc)
         db.rollback()
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "code": exc.verdict.code,
-                "message_en": exc.verdict.message_en,
-                "message_ms": exc.verdict.message_ms,
-                "suggested_funds": [f.value for f in exc.verdict.suggested_funds],
-            },
-        )
-    except InsufficientBalance as exc:
-        detail = {
-            "code": "insufficient_fund_balance",
-            "message_en": str(exc),
-            "message_ms": f"Baki {exc.fund.label_ms} hanya {exc.balance}.",
-        }
-        db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, detail=detail)
+        raise error
     except LedgerError as exc:
         db.rollback()
         raise HTTPException(400, str(exc))
@@ -761,6 +835,11 @@ def close_count(
 ):
     inst = get_institution(db, slug)
     assert_same_institution(user, inst)
+    names = list(dict.fromkeys(" ".join(w.split()) for w in body.witnesses if w.strip()))
+    if any(len(n) > 120 for n in names):
+        raise HTTPException(422, "A witness name is too long")
+    if len({n.casefold() for n in names}) != len(names):
+        raise HTTPException(422, "Each witness must be a different person")
     device_id = None
     if body.device_serial:
         device = db.scalars(
@@ -780,7 +859,8 @@ def close_count(
             device_id=device_id,
             counted_total=body.counted_total,
             cash_fund_id=cash_fund(db, inst).id,
-            witness_count=body.witness_count,
+            witness_count=len(names) or body.witness_count,
+            witness_names="\n".join(names) or None,
             note=body.note,
             closed_by=user.id,
             target_fund_id=target.id if target else None,
@@ -942,6 +1022,7 @@ async def live_socket(websocket: WebSocket, slug: str, token: str = ""):
     try:
         try:
             user = auth.get_current_user(token=token, db=db)
+            auth.assert_own_password(user)
             inst = get_institution(db, slug)
             assert_same_institution(user, inst)
             inst_id = inst.id
@@ -1186,3 +1267,8 @@ def verify_ledger(
         "head_hash": result.head_hash,
         "summary": result.summary,
     }
+
+
+from app.api import daily  # noqa: E402  (needs everything above)
+
+app.include_router(daily.router)

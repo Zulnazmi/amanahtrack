@@ -18,7 +18,7 @@ BACKEND = Path(__file__).resolve().parents[2]
 FIRST = "13fa679c302e"
 
 
-def upgrade(engine: Engine) -> None:
+def upgrade(engine: Engine, to: str = "head") -> None:
     cfg = Config()
     cfg.set_main_option("script_location", str(BACKEND / "migrations").replace("%", "%%"))
     with engine.begin() as conn:
@@ -26,4 +26,4 @@ def upgrade(engine: Engine) -> None:
         tables = inspect(conn).get_table_names()
         if "institutions" in tables and "alembic_version" not in tables:
             command.stamp(cfg, FIRST)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, to)

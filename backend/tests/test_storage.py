@@ -9,7 +9,7 @@ from test_alerts import PNG, env, login, post_alert  # noqa: F401
 
 import app.main as main
 from app.core import config, migrate
-from app.models import Alert, Base, Institution
+from app.models import Alert, Base, Institution, User
 from app.services import storage
 
 moto_server = pytest.importorskip("moto.server")
@@ -164,19 +164,28 @@ def test_a_new_database_matches_the_models(tmp_path):
 def test_an_older_database_is_upgraded_and_keeps_its_data(tmp_path):
     """What an earlier release left behind: tables, but no version."""
     engine = create_engine(f"sqlite:///{tmp_path}/old.db")
-    Base.metadata.create_all(engine)
+    migrate.upgrade(engine, "7c1e52b0a9d4")
     with engine.begin() as conn:
+        conn.execute(text("DROP TABLE alembic_version"))
         conn.execute(text("DROP TABLE device_messages"))
         conn.execute(text("ALTER TABLE alerts DROP COLUMN photo_key"))
         conn.execute(text("ALTER TABLE devices DROP COLUMN door_alerted"))
-    with sessionmaker(bind=engine)() as db:
-        db.add(Institution(name="Keep me", slug="keep"))
-        db.commit()
+        conn.execute(text(
+            "INSERT INTO institutions (id, name, slug, public_page_enabled, created_at)"
+            " VALUES ('i', 'Keep me', 'keep', 1, '2026-01-01 00:00:00')"
+        ))
+        conn.execute(text(
+            "INSERT INTO users (id, institution_id, name, email, role, active, created_at)"
+            " VALUES ('u', 'i', 'Old user', 'Old@a.my', 'ADMIN', 1, '2026-01-01 00:00:00')"
+        ))
     migrate.upgrade(engine)
     assert "photo_key" in {c["name"] for c in inspect(engine).get_columns("alerts")}
     assert schema_diff(engine) == []
     with sessionmaker(bind=engine)() as db:
-        assert db.query(Institution).one().name == "Keep me"
+        inst = db.query(Institution).one()
+        assert inst.name == "Keep me" and inst.approval_limit is None
+        user = db.query(User).one()
+        assert user.token_version == 0 and user.must_change_password is False
 
 
 def test_hosted_database_links_use_the_right_driver(monkeypatch):
