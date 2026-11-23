@@ -1,11 +1,32 @@
+# Python
 .venv/
-node_modules/
+venv/
 __pycache__/
-.expo/
+*.pyc
+.pytest_cache/
+
+# Local database and uploaded evidence (can contain device secrets and photos)
 *.db
+*.sqlite
+*.sqlite3
+backend/uploads/
+backend/evidence/
+
+# Device
 queue.jsonl
 box.env
+
+# Environment / secrets
 .env
-.env.local
+.env.*
+!.env.example
+*.pem
+*.key
 google-services.json
 *firebase-adminsdk*.json
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
