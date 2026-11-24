@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api, Answer } from '../src/api/client';
 import { fullTime } from '../src/format';
+import { useLang } from '../src/lang';
 import { Lang, spokenAnswer } from '../src/speakable';
 import { colors, fonts, radius } from '../src/theme';
 import { Icon } from '../src/ui/Icon';
@@ -37,14 +38,23 @@ import { useListening, useSpeaking } from '../src/voice';
 
 type Turn = { id: number; question: string; answer?: Answer; error?: string };
 
-const START = 'Ringkasan hari ini';
-const FIRST = [
-  'Baki setiap dana',
-  'Derma minggu ini',
-  'Ramalan minggu depan',
-  'Ada apa-apa luar biasa?',
-  'Boleh guna zakat untuk bumbung?',
-];
+const START: Record<Lang, string> = { ms: 'Ringkasan hari ini', en: 'Summary today' };
+const FIRST: Record<Lang, string[]> = {
+  ms: [
+    'Baki setiap dana',
+    'Derma minggu ini',
+    'Ramalan minggu depan',
+    'Ada apa-apa luar biasa?',
+    'Boleh guna zakat untuk bumbung?',
+  ],
+  en: [
+    'Balance of each fund',
+    'Donations this week',
+    'Forecast next week',
+    'Anything unusual?',
+    'Can zakat pay for the roof?',
+  ],
+};
 
 // Asked again: spoken questions are now sent by themselves
 const VOICE_OK = 'amanah.voice.ok2';
@@ -54,7 +64,7 @@ const SAYS: Record<Lang, Record<Mood | 'sending', string>> = {
   ms: {
     idle: 'Tekan saya dan tanya',
     listening: 'Saya sedang mendengar…',
-    thinking: 'Sekejap, saya semak lejar…',
+    thinking: 'Sekejap, saya semak rekod…',
     speaking: 'Tekan untuk berhenti',
     trouble: 'Saya tidak dapat menjawab',
     sending: 'Menghantar… tekan untuk batal',
@@ -62,7 +72,7 @@ const SAYS: Record<Lang, Record<Mood | 'sending', string>> = {
   en: {
     idle: 'Tap me and ask',
     listening: 'I am listening…',
-    thinking: 'One moment, checking the ledger…',
+    thinking: 'One moment, checking the records…',
     speaking: 'Tap to stop',
     trouble: 'I could not answer',
     sending: 'Sending… tap to cancel',
@@ -95,7 +105,8 @@ export default function AssistantScreen() {
   const next = useRef(0);
   const context = useRef<Answer['context']>(null);
 
-  const [lang, setLang] = useState<Lang>('ms');
+  const { lang: appLang, t: tr } = useLang();
+  const [lang, setLang] = useState<Lang>(appLang);
   const [asking, setAsking] = useState(false);
 
   // How loud the voice is right now, shown by the avatar
@@ -191,14 +202,14 @@ export default function AssistantScreen() {
         setTurns((t) => t.map((x) => (x.id === id ? { ...x, answer } : x)));
         if (aloud && here.current) speak(id, spokenAnswer(answer), answer.lang);
       } catch (e) {
-        const error = e instanceof Error ? e.message : 'Tidak dapat menjawab.';
+        const error = e instanceof Error ? e.message : tr('Tidak dapat menjawab.', 'Could not answer.');
         setTurns((t) => t.map((x) => (x.id === id ? { ...x, error } : x)));
       } finally {
         working.current = false;
         setBusy(false);
       }
     },
-    [cancel, hold, hush, speak],
+    [cancel, hold, hush, speak, tr],
   );
   askRef.current = ask;
 
@@ -206,8 +217,8 @@ export default function AssistantScreen() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    ask(START);
-  }, [ask]);
+    ask(START[appLang]);
+  }, [ask, appLang]);
 
   function send() {
     if (working.current || !text.trim()) return;
@@ -244,7 +255,7 @@ export default function AssistantScreen() {
   }
 
   const last = turns[turns.length - 1];
-  const chips = last?.answer?.suggestions.length ? last.answer.suggestions : turns.length < 2 ? FIRST : [];
+  const chips = last?.answer?.suggestions.length ? last.answer.suggestions : turns.length < 2 ? FIRST[appLang] : [];
   const trouble = problem ?? silent;
   const mood: Mood = listening
     ? 'listening'
@@ -269,11 +280,11 @@ export default function AssistantScreen() {
             turns.length > 1 ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={history ? 'Tutup sejarah' : 'Sejarah'}
+                accessibilityLabel={history ? tr('Tutup sejarah', 'Close history') : tr('Sejarah', 'History')}
                 onPress={() => setHistory((h) => !h)}
                 style={s.headerBtn}
               >
-                <Text style={s.chipText}>{history ? 'Tutup' : 'Sejarah'}</Text>
+                <Text style={s.chipText}>{history ? tr('Tutup', 'Close') : tr('Sejarah', 'History')}</Text>
               </Pressable>
             ) : null,
         }}
@@ -284,12 +295,12 @@ export default function AssistantScreen() {
           accessibilityRole="button"
           accessibilityLabel={
             sending
-              ? 'Batal hantar'
+              ? tr('Batal hantar', 'Cancel sending')
               : listening
-                ? 'Berhenti mendengar'
+                ? tr('Berhenti mendengar', 'Stop listening')
                 : speaking !== null
-                  ? 'Berhenti membaca'
-                  : 'Cakap'
+                  ? tr('Berhenti membaca', 'Stop speaking')
+                  : tr('Cakap', 'Speak')
           }
           accessibilityState={{ busy, disabled: busy }}
           disabled={busy}
@@ -312,24 +323,24 @@ export default function AssistantScreen() {
       <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
         {asking ? (
           <View style={s.sheet}>
-            <Text style={s.sheetTitle}>Tanya dengan suara</Text>
+            <Text style={s.sheetTitle}>{tr('Tanya dengan suara', 'Ask by voice')}</Text>
             <Text style={s.sheetText}>
-              Mikrofon dibuka hanya apabila anda menekan Pembantu. Telefon menukar suara kepada teks
-              dan mungkin menghantar audio kepada penyedianya, seperti Google atau Apple. AmanahTrack
-              tidak menyimpan audio. Soalan dihantar selepas anda berhenti bercakap, dan boleh
-              dibatalkan. Jangan sebut nama penderma.
+              {tr(
+                'Mikrofon dibuka hanya apabila anda menekan Pembantu. Telefon menukar suara kepada teks dan mungkin menghantar audio kepada penyedianya, seperti Google atau Apple. AmanahTrack tidak menyimpan audio. Soalan dihantar selepas anda berhenti bercakap, dan boleh dibatalkan. Jangan sebut nama penderma.',
+                'The microphone opens only when you tap the Assistant. Your phone turns speech into text and may send the audio to its provider, such as Google or Apple. AmanahTrack keeps no audio. The question is sent after you stop talking, and can be cancelled. Do not say donors’ names.',
+              )}
             </Text>
             <View style={s.chips}>
-              <Pressable accessibilityRole="button" accessibilityLabel="Setuju dan cakap" style={s.chip} onPress={agree}>
-                <Text style={s.chipText}>Setuju dan cakap</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={tr('Setuju dan cakap', 'Agree and speak')} style={s.chip} onPress={agree}>
+                <Text style={s.chipText}>{tr('Setuju dan cakap', 'Agree and speak')}</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Tidak, saya taip"
+                accessibilityLabel={tr('Tidak, saya taip', 'No, I will type')}
                 style={s.chip}
                 onPress={() => setAsking(false)}
               >
-                <Text style={s.chipText}>Tidak, saya taip</Text>
+                <Text style={s.chipText}>{tr('Tidak, saya taip', 'No, I will type')}</Text>
               </Pressable>
             </View>
           </View>
@@ -341,7 +352,7 @@ export default function AssistantScreen() {
           shown.map((t) => (
             <FadeUp key={`${t.id}-${t.answer ? 'a' : t.error ? 'e' : 'q'}`} style={{ gap: 12 }}>
               {t.id === 0 && !history ? (
-                <Text style={s.hello}>Assalamualaikum. Saya Pembantu Amanah.</Text>
+                <Text style={s.hello}>{tr('Assalamualaikum. Saya Pembantu Amanah.', 'Assalamualaikum. I am your Amanah Assistant.')}</Text>
               ) : (
                 <Text style={s.you}>“{t.question}”</Text>
               )}
@@ -358,11 +369,11 @@ export default function AssistantScreen() {
                   <Text style={s.errorText}>{t.error}</Text>
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Cuba lagi"
+                    accessibilityLabel={tr('Cuba lagi', 'Try again')}
                     style={s.retry}
                     onPress={() => ask(t.question, t.id)}
                   >
-                    <Text style={s.errorText}>Cuba lagi</Text>
+                    <Text style={s.errorText}>{tr('Cuba lagi', 'Try again')}</Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -371,8 +382,10 @@ export default function AssistantScreen() {
         )}
         {!live && !asking && (
           <Text style={s.lede}>
-            Jawapan dikira daripada lejar masjid anda. Pembantu hanya membaca; ia tidak merekod atau
-            meluluskan apa-apa.
+            {tr(
+              'Jawapan dikira daripada rekod masjid anda. Pembantu hanya membaca; ia tidak merekod atau meluluskan apa-apa.',
+              'Answers are worked out from your mosque’s records. The Assistant only reads; it records and approves nothing.',
+            )}
           </Text>
         )}
       </ScrollView>
@@ -420,11 +433,11 @@ export default function AssistantScreen() {
           maxLength={300}
           placeholder={lang === 'en' ? 'Or type here' : 'Atau taip di sini'}
           placeholderTextColor={colors.inkFaint}
-          accessibilityLabel="Soalan anda"
+          accessibilityLabel={tr('Soalan anda', 'Your question')}
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Hantar"
+          accessibilityLabel={tr('Hantar', 'Send')}
           onPress={send}
           disabled={busy || !text.trim()}
           style={[s.send, (busy || !text.trim()) && { opacity: 0.4 }]}

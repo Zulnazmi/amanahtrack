@@ -7,6 +7,8 @@
  * thrown exception with a lost body.
  */
 
+import { say } from '../lang';
+
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 /**
@@ -271,13 +273,21 @@ function authHeaders(): Record<string, string> {
   return TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 }
 
-const OFFLINE = 'Tiada sambungan ke pelayan. Semak internet dan cuba lagi.';
+const offline = () =>
+  say(
+    'Tiada sambungan ke pelayan. Semak internet dan cuba lagi.',
+    'No connection to the server. Check the internet and try again.',
+  );
+const expired = () =>
+  say('Sesi tamat. Sila log masuk semula.', 'Your session has ended. Please sign in again.');
+const wording = (d?: { message_ms?: string; message_en?: string }) =>
+  say(d?.message_ms ?? d?.message_en ?? '', d?.message_en ?? d?.message_ms ?? '') || undefined;
 
 async function reach(url: string, init?: RequestInit): Promise<Response> {
   try {
     return await fetch(url, init);
   } catch {
-    throw new Error(OFFLINE);
+    throw new Error(offline());
   }
 }
 
@@ -295,15 +305,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // confusing empty screen.
     setSession(null);
     onExpired?.();
-    throw new Error('Sesi tamat. Sila log masuk semula.');
+    throw new Error(expired());
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const detail = body?.detail;
     if (detail?.code === 'password_change_required') onMustChange?.();
     throw new Error(
-      (typeof detail === 'string' ? detail : detail?.message_ms ?? detail?.message_en) ??
-        `Request failed (${res.status})`,
+      (typeof detail === 'string' ? detail : wording(detail)) ??
+        say(`Permintaan gagal (${res.status})`, `Request failed (${res.status})`),
     );
   }
   if (res.status === 204) return undefined as T;
@@ -322,10 +332,13 @@ export async function login(email: string, password: string): Promise<Session> {
   if (!res.ok) {
     throw new Error(
       res.status === 401
-        ? 'E-mel atau kata laluan salah.'
+        ? say('E-mel atau kata laluan salah.', 'Wrong email or password.')
         : res.status === 429
-          ? 'Terlalu banyak cubaan. Cuba lagi selepas 15 minit.'
-          : `Tidak dapat log masuk (${res.status})`,
+          ? say(
+              'Terlalu banyak cubaan. Cuba lagi selepas 15 minit.',
+              'Too many attempts. Try again in 15 minutes.',
+            )
+          : say(`Tidak dapat log masuk (${res.status})`, `Could not sign in (${res.status})`),
     );
   }
   const data = await res.json();
@@ -444,21 +457,24 @@ export const api = {
         body: JSON.stringify(body),
       });
     } catch {
-      return { ok: false, error: OFFLINE };
+      return { ok: false, error: offline() };
     }
     const payload = await res.json().catch(() => null);
 
     if (res.status === 401) {
       setSession(null);
       onExpired?.();
-      return { ok: false, error: 'Sesi tamat. Sila log masuk semula.' };
+      return { ok: false, error: expired() };
     }
     if (res.status === 403) {
       return {
         ok: false,
         error:
-          payload?.detail?.message_ms ??
-          'Peranan anda tidak dibenarkan merekod perbelanjaan.',
+          wording(payload?.detail) ??
+          say(
+            'Peranan anda tidak dibenarkan merekod perbelanjaan.',
+            'Your role is not allowed to record spending.',
+          ),
       };
     }
     if (res.ok) return { ok: true, data: payload };
@@ -468,7 +484,7 @@ export const api = {
     return {
       ok: false,
       code: payload?.detail?.code,
-      error: payload?.detail?.message_ms ?? `Tidak dapat merekod (${res.status})`,
+      error: wording(payload?.detail) ?? say(`Tidak dapat merekod (${res.status})`, `Could not record (${res.status})`),
     };
   },
 

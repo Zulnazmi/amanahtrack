@@ -24,7 +24,7 @@ const TINT: Record<Mood, string> = {
 };
 
 const BARS = 56;
-const STAR = star(46, 35.2);
+export const STAR = star(46, 35.2);
 const STAR_OUT = star(66, 50.5);
 
 /** Two overlapping squares, drawn as one outline of sixteen corners. */

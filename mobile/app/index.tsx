@@ -8,11 +8,14 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { api, canApprove, canWrite, Fund } from '../src/api/client';
+import { api, canWrite, Fund } from '../src/api/client';
 import { fullTime } from '../src/format';
+import { say, useLang } from '../src/lang';
 import { useLive } from '../src/live';
 import { useRetry } from '../src/retry';
+import { roleName } from '../src/roles';
 import { useSession } from '../src/session';
 import { colors, fonts, radius, ringgit, space } from '../src/theme';
 import { BottomBar } from '../src/ui/BottomBar';
@@ -22,23 +25,16 @@ import { FadeUp, GrowX, PressScale, Skeleton } from '../src/ui/motion';
 
 type Verification = { intact: boolean; checked: number; summary: string };
 
-const ROLE_LABEL: Record<string, string> = {
-  admin: 'Admin',
-  treasurer: 'Treasurer',
-  auditor: 'Auditor',
-  committee: 'Committee',
-};
-
-/** Short plain-English rule line per fund category. */
-const RULE_LINE: Record<string, string> = {
-  sadaqah: 'Any lawful purpose',
-  zakat: 'Eight asnaf only',
-  infaq: 'Bound to donor intent',
-  khairat: 'Funeral support only',
-  waqf_principal: 'Perpetual, income only',
-  waqf_income: 'Within the waqif’s purpose',
-  nazar: 'Bound to the vow',
-  fidyah: 'The poor only',
+/** What each kind of fund may be used for, in a few plain words. */
+const RULE_LINE: Record<string, [string, string]> = {
+  sadaqah: ['Apa-apa keperluan yang dibenarkan', 'Any lawful purpose'],
+  zakat: ['Lapan golongan asnaf sahaja', 'The eight asnaf only'],
+  infaq: ['Ikut niat penderma', 'As the donor intended'],
+  khairat: ['Urusan kematian sahaja', 'Funeral support only'],
+  waqf_principal: ['Modal kekal, tidak boleh dibelanjakan', 'Permanent, cannot be spent'],
+  waqf_income: ['Ikut tujuan pewakaf', 'As the waqif intended'],
+  nazar: ['Ikut nazar', 'As the vow states'],
+  fidyah: ['Fakir miskin sahaja', 'The poor only'],
 };
 
 function fundColor(f: Fund): string {
@@ -65,6 +61,8 @@ export default function HomeScreen() {
   const { session, signOut } = useSession();
   const writable = canWrite(session?.role);
   const live = useLive();
+  const insets = useSafeAreaInsets();
+  const { t } = useLang();
 
   const [funds, setFunds] = useState<Fund[]>([]);
   const [verification, setVerification] = useState<Verification | null>(null);
@@ -105,7 +103,7 @@ export default function HomeScreen() {
     } catch (e) {
       if (turn !== latest.current) return;
       setFailures((n) => n + 1);
-      setError(e instanceof Error ? e.message : 'Could not reach the ledger');
+      setError(e instanceof Error ? e.message : say('Tidak dapat membaca rekod.', 'Could not read the records.'));
     } finally {
       if (turn === latest.current) {
         setLoading(false);
@@ -137,7 +135,7 @@ export default function HomeScreen() {
     <View style={s.screen}>
       <View style={s.glow} />
       <ScrollView
-        contentContainerStyle={s.content}
+        contentContainerStyle={[s.content, { paddingTop: insets.top + 16 }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -153,33 +151,32 @@ export default function HomeScreen() {
           <View style={s.header}>
             <View style={s.headLeft}>
               <LogoMark size={38} />
-              <View>
-                <Text style={s.institution}>{session?.institution || 'AmanahTrack'}</Text>
-                <Text style={s.role}>
-                  {session?.name} {'·'} {ROLE_LABEL[session?.role ?? ''] ?? session?.role}
+              <View style={{ flex: 1 }}>
+                <Text style={s.institution} numberOfLines={1}>
+                  {session?.institution || 'AmanahTrack'}
+                </Text>
+                <Text style={s.role} numberOfLines={1}>
+                  {session?.name} · {roleName(session?.role, t)}
                 </Text>
               </View>
             </View>
-            <View style={s.headRight}>
-              <PressScale
-                onPress={() => router.push('/alerts')}
-                style={s.iconBtn}
-                accessibilityLabel="Alerts"
-              >
-                <Icon name="bell" size={19} color={colors.inkSoft} />
-                {alertInfo.open > 0 && <View style={s.bellDot} />}
-              </PressScale>
-              <PressScale onPress={signOut} style={s.iconBtn} accessibilityLabel="Sign out">
-                <Icon name="logout" size={19} color={colors.inkSoft} />
-              </PressScale>
-            </View>
+            <PressScale
+              onPress={() => router.push('/settings')}
+              style={s.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('Tetapan', 'Settings')}
+            >
+              <Icon name="gear" size={20} color={colors.inkSoft} />
+            </PressScale>
           </View>
         </FadeUp>
 
         {error && (
           <View style={s.errorBar}>
             <Text style={s.errorText}>{error}</Text>
-            <Text style={s.errorHint}>Sedang cuba semula. Tarik ke bawah untuk cuba sekarang.</Text>
+            <Text style={s.errorHint}>
+              {t('Sedang cuba semula. Tarik ke bawah untuk cuba sekarang.', 'Trying again. Pull down to try now.')}
+            </Text>
           </View>
         )}
 
@@ -188,35 +185,9 @@ export default function HomeScreen() {
           <HomeSkeleton />
         ) : (
           <>
-            {alertInfo.open > 0 && (
-              <FadeUp delay={60}>
-                <PressScale
-                  onPress={() => router.push('/alerts')}
-                  scaleTo={0.98}
-                  style={[s.alertCard, alertInfo.critical_open > 0 && s.alertCardCritical]}
-                >
-                  <View style={s.alertIcon}>
-                    <Icon
-                      name="alert"
-                      size={21}
-                      color={alertInfo.critical_open > 0 ? colors.danger : colors.brass}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.alertTitle}>
-                      {alertInfo.open} alert{alertInfo.open === 1 ? '' : 's'} need
-                      {alertInfo.open === 1 ? 's' : ''} review
-                    </Text>
-                    <Text style={s.alertSub}>Check the photos and verify the hashes</Text>
-                  </View>
-                  <Icon name="chevron" size={18} color={colors.inkFaint} />
-                </PressScale>
-              </FadeUp>
-            )}
-
             <FadeUp delay={100} style={s.hero}>
               <View style={s.heroTop}>
-                <Text style={s.heroLabel}>TOTAL HELD</Text>
+                <Text style={s.heroLabel}>{t('Wang masjid sekarang', 'Mosque money now')}</Text>
                 {verification && (
                   <View style={[s.sealPill, !verification.intact && s.sealPillBroken]}>
                     <Icon
@@ -227,10 +198,10 @@ export default function HomeScreen() {
                     />
                     <Text style={[s.sealText, { color: sealColor }]}>
                       {!verification.intact
-                        ? 'Chain broken'
+                        ? t('Rekod diusik', 'Records altered')
                         : error
-                          ? 'Belum dikemas kini'
-                          : 'Ledger sealed'}
+                          ? t('Belum dikemas kini', 'Not up to date')
+                          : t('Rekod utuh', 'Records intact')}
                     </Text>
                   </View>
                 )}
@@ -261,48 +232,71 @@ export default function HomeScreen() {
               <View style={s.heroFoot}>
                 <Text style={s.heroFootText}>
                   {error
-                    ? `Kemas kini terakhir: ${fullTime(updatedAt)}`
-                    : verification
-                      ? `${verification.checked} ${verification.checked === 1 ? 'entry' : 'entries'} verified`
+                    ? t(`Kemas kini terakhir: ${fullTime(updatedAt)}`, `Last updated: ${fullTime(updatedAt)}`)
+                    : verification && verification.intact
+                      ? t(
+                          `${verification.checked} rekod disemak`,
+                          `${verification.checked} ${verification.checked === 1 ? 'record' : 'records'} checked`,
+                        )
                       : ''}
                 </Text>
               </View>
             </FadeUp>
 
-            <FadeUp delay={160}>
-              <View style={s.actions}>
-                <Action icon="chat" label="Tanya Pembantu" href="/assistant" />
-                {writable && <Action icon="box" label="Rekod derma" href="/donate" />}
-                {writable && <Action icon="count" label="Kira tabung" href="/count" />}
-                <Action
-                  icon="check"
-                  label={canApprove(session?.role) && waiting > 0 ? `Kelulusan (${waiting})` : 'Kelulusan'}
-                  href="/approvals"
-                  hot={waiting > 0}
-                />
-                {(session?.role === 'admin' || session?.role === 'auditor') && (
-                  <Action icon="shield" label="Pengguna" href="/people" />
+            {(alertInfo.open > 0 || waiting > 0) && (
+              <FadeUp delay={140} style={{ gap: 10 }}>
+                <Text style={s.fundsTitle}>{t('Perlu tindakan anda', 'Needs your attention')}</Text>
+                {alertInfo.open > 0 && (
+                  <Todo
+                    icon="alert"
+                    critical={alertInfo.critical_open > 0}
+                    title={t(
+                      `${alertInfo.open} amaran belum disemak`,
+                      `${alertInfo.open} ${alertInfo.open === 1 ? 'alert' : 'alerts'} to review`,
+                    )}
+                    note={t('Lihat gambar dan apa yang berlaku', 'See the photos and what happened')}
+                    href="/alerts"
+                  />
                 )}
-                <Action icon="lock" label="Kata laluan" href="/password" />
+                {waiting > 0 && (
+                  <Todo
+                    icon="check"
+                    title={t(`${waiting} permintaan menunggu kelulusan`, `${waiting} waiting for approval`)}
+                    note={t('Semak dan beri keputusan', 'Check and decide')}
+                    href="/approvals"
+                  />
+                )}
+              </FadeUp>
+            )}
+
+            <FadeUp delay={180}>
+              <View style={s.actions}>
+                {writable && <Action icon="box" label={t('Rekod derma', 'Record donation')} href="/donate" />}
+                {writable && <Action icon="spend" label={t('Rekod belanja', 'Record spending')} href="/spend" />}
+                {writable && <Action icon="count" label={t('Kira tabung', 'Box count')} href="/count" />}
+                <Action icon="check" label={t('Kelulusan', 'Approvals')} href="/approvals" />
               </View>
             </FadeUp>
 
             <FadeUp delay={320} style={s.fundsHead}>
-              <Text style={s.fundsTitle}>Funds</Text>
-              <Text style={s.fundsSub}>Grouped by spending rule</Text>
+              <Text style={s.fundsTitle}>{t('Dana', 'Funds')}</Text>
+              <Text style={s.fundsSub}>{t('Ikut syarat penggunaan', 'By what they may be used for')}</Text>
             </FadeUp>
 
             <FadeUp delay={400}>
               <View style={s.list}>
-                <Group label="SPENDABLE" funds={spendable} writable={writable} first />
-                <Group label="RESTRICTED" funds={restricted} writable={writable} />
-                <Group label="LOCKED" funds={locked} writable={false} />
+                <Group label={t('Boleh guna', 'Free to use')} funds={spendable} writable={writable} first />
+                <Group label={t('Ada syarat', 'With conditions')} funds={restricted} writable={writable} />
+                <Group label={t('Dikunci', 'Locked')} funds={locked} writable={false} />
               </View>
             </FadeUp>
 
             {!writable && (
               <Text style={s.readOnly}>
-                Your account can view records but not post transactions.
+                {t(
+                  'Akaun anda boleh melihat rekod sahaja, tidak boleh merekod.',
+                  'Your account can view records but not add to them.',
+                )}
               </Text>
             )}
           </>
@@ -314,17 +308,55 @@ export default function HomeScreen() {
   );
 }
 
-function Action({ icon, label, href, hot }: { icon: IconName; label: string; href: string; hot?: boolean }) {
+function Action({ icon, label, href }: { icon: IconName; label: string; href: string }) {
+  const router = useRouter();
+  return (
+    <View style={s.actionCell}>
+      <PressScale
+        onPress={() => router.push(href as never)}
+        style={s.action}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        <View style={s.actionIcon}>
+          <Icon name={icon} size={22} color={colors.green} />
+        </View>
+        <Text style={s.actionText}>{label}</Text>
+      </PressScale>
+    </View>
+  );
+}
+
+function Todo({
+  icon,
+  title,
+  note,
+  href,
+  critical,
+}: {
+  icon: IconName;
+  title: string;
+  note: string;
+  href: string;
+  critical?: boolean;
+}) {
   const router = useRouter();
   return (
     <PressScale
       onPress={() => router.push(href as never)}
-      style={[s.action, hot && s.actionHot]}
+      scaleTo={0.98}
+      style={[s.alertCard, critical && s.alertCardCritical]}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={title}
     >
-      <Icon name={icon} size={18} color={hot ? colors.brass : colors.green} />
-      <Text style={s.actionText}>{label}</Text>
+      <View style={s.alertIcon}>
+        <Icon name={icon} size={21} color={critical ? colors.danger : colors.brass} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.alertTitle}>{title}</Text>
+        <Text style={s.alertSub}>{note}</Text>
+      </View>
+      <Icon name="chevron" size={18} color={colors.inkFaint} />
     </PressScale>
   );
 }
@@ -341,6 +373,7 @@ function Group({
   first?: boolean;
 }) {
   const router = useRouter();
+  const { t } = useLang();
   if (funds.length === 0) return null;
   return (
     <View style={[!first && s.groupDivider]}>
@@ -357,8 +390,8 @@ function Group({
           >
             <View style={[s.swatch, { backgroundColor: fundColor(f) }]} />
             <View style={{ flex: 1 }}>
-              <Text style={s.rowName}>{f.label_en}</Text>
-              <Text style={s.rowRule}>{RULE_LINE[f.category] ?? f.constraint_note}</Text>
+              <Text style={s.rowName}>{t(f.label_ms, f.label_en)}</Text>
+              <Text style={s.rowRule}>{RULE_LINE[f.category] ? t(...RULE_LINE[f.category]) : f.constraint_note}</Text>
             </View>
             {isLocked && <Icon name="lock" size={15} color={colors.inkFaint} strokeWidth={1.9} />}
             <View style={{ alignItems: 'flex-end' }}>
@@ -398,13 +431,12 @@ const s = StyleSheet.create({
     borderRadius: 210,
     backgroundColor: 'rgba(79,227,168,0.06)',
   },
-  content: { padding: 20, paddingTop: 56, paddingBottom: 130, gap: 14 },
+  content: { padding: 20, paddingBottom: 32, gap: 18 },
 
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  headRight: { flexDirection: 'row', gap: 10 },
-  headLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  institution: { fontFamily: fonts.display, fontSize: 15, color: colors.ink },
-  role: { fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint, marginTop: 1 },
+  headLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, marginRight: 12 },
+  institution: { fontFamily: fonts.display, fontSize: 17, color: colors.ink },
+  role: { fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint, marginTop: 1 },
   iconBtn: {
     width: 44,
     height: 44,
@@ -416,17 +448,6 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  bellDot: {
-    position: 'absolute',
-    top: 10,
-    right: 11,
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: colors.danger,
-    borderWidth: 1.5,
-    borderColor: colors.surface,
-  },
   alertCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -450,27 +471,34 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  alertTitle: { fontFamily: fonts.bodySemi, fontSize: 14, color: colors.ink },
-  alertSub: { fontFamily: fonts.body, fontSize: 12, color: colors.inkSoft, marginTop: 2 },
+  alertTitle: { fontFamily: fonts.bodySemi, fontSize: 16, color: colors.ink },
+  alertSub: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft, marginTop: 2 },
 
   errorBar: { padding: space.md, backgroundColor: colors.dangerSoft, borderRadius: radius.md },
   errorText: { fontFamily: fonts.body, fontSize: 14, color: colors.danger },
-  errorHint: { fontFamily: fonts.body, fontSize: 12, color: colors.danger, marginTop: 2, opacity: 0.8 },
+  errorHint: { fontFamily: fonts.body, fontSize: 14, color: colors.danger, marginTop: 2, opacity: 0.8 },
 
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', margin: -5 },
+  actionCell: { width: '50%', padding: 5 },
   action: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    minHeight: 48,
-    paddingHorizontal: 16,
-    borderRadius: 16,
+    minHeight: 104,
+    padding: 14,
+    gap: 10,
+    justifyContent: 'space-between',
+    borderRadius: 20,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.lineStrong,
   },
-  actionHot: { backgroundColor: colors.brassSoft, borderColor: 'rgba(240,198,116,0.35)' },
-  actionText: { fontFamily: fonts.bodySemi, fontSize: 14, color: colors.ink },
+  actionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.greenSoft,
+  },
+  actionText: { fontFamily: fonts.bodySemi, fontSize: 16, color: colors.ink },
 
   hero: {
     borderRadius: radius.xl,
@@ -480,7 +508,7 @@ const s = StyleSheet.create({
     borderColor: 'rgba(79,227,168,0.28)',
   },
   heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  heroLabel: { fontFamily: fonts.bodyBold, fontSize: 12, letterSpacing: 1.2, color: '#A9D8C5' },
+  heroLabel: { fontFamily: fonts.bodySemi, fontSize: 15, color: '#A9D8C5' },
   sealPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -491,7 +519,7 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(6,16,13,0.45)',
   },
   sealPillBroken: { backgroundColor: 'rgba(255,122,107,0.2)' },
-  sealText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.green },
+  sealText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.green },
   heroAmount: {
     fontFamily: fonts.display,
     fontSize: 36,
@@ -506,12 +534,12 @@ const s = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
-  heroFootText: { fontFamily: fonts.body, fontSize: 12, color: '#A9D8C5' },
+  heroFootText: { fontFamily: fonts.body, fontSize: 14, color: '#A9D8C5' },
 
 
   fundsHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
-  fundsTitle: { fontFamily: fonts.display, fontSize: 16, color: colors.ink },
-  fundsSub: { fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint },
+  fundsTitle: { fontFamily: fonts.display, fontSize: 18, color: colors.ink },
+  fundsSub: { fontFamily: fonts.body, fontSize: 13.5, color: colors.inkFaint },
 
   list: {
     paddingHorizontal: 14,
@@ -524,21 +552,20 @@ const s = StyleSheet.create({
   groupDivider: { borderTopWidth: 1, borderTopColor: colors.line },
   groupLabel: {
     fontFamily: fonts.bodyBold,
-    fontSize: 10.5,
-    letterSpacing: 1.3,
+    fontSize: 13,
     color: colors.inkFaint,
     paddingTop: 12,
     paddingBottom: 2,
   },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 54, paddingVertical: 6 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 64, paddingVertical: 8 },
   swatch: { width: 10, height: 10, borderRadius: 3 },
-  rowName: { fontFamily: fonts.bodySemi, fontSize: 14.5, color: colors.ink },
-  rowRule: { fontFamily: fonts.body, fontSize: 11.5, color: colors.inkFaint, marginTop: 1 },
-  rowAmount: { fontFamily: fonts.display, fontSize: 14.5, color: colors.ink },
+  rowName: { fontFamily: fonts.bodySemi, fontSize: 16, color: colors.ink },
+  rowRule: { fontFamily: fonts.body, fontSize: 13.5, color: colors.inkFaint, marginTop: 1 },
+  rowAmount: { fontFamily: fonts.display, fontSize: 16, color: colors.ink },
 
   readOnly: {
     fontFamily: fonts.body,
-    fontSize: 12.5,
+    fontSize: 14,
     color: colors.inkFaint,
     textAlign: 'center',
     marginTop: 4,

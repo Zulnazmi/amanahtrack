@@ -20,7 +20,8 @@ export type IconName =
   | 'chat'
   | 'mic'
   | 'speaker'
-  | 'stop';
+  | 'stop'
+  | 'gear';
 
 /** Stroke icons drawn on a 24 grid, same family as the design mockups. */
 export function Icon({
@@ -119,6 +120,9 @@ export function Icon({
       {name === 'chevron' && <Path {...p} d="M9 6l6 6-6 6" />}
       {name === 'check' && <Path {...p} d="M5 12.5l4.5 4.5L19 7.5" />}
       {name === 'x' && <Path {...p} d="M6 6l12 12M18 6L6 18" />}
+      {name === 'gear' && (
+        <Path {...p} d="M4 7h9M17 7h3M4 17h3M11 17h9M15 4.5v5M9 14.5v5" />
+      )}
       {name === 'mic' && (
         <>
           <Rect {...p} x={9} y={3} width={6} height={11} rx={3} />

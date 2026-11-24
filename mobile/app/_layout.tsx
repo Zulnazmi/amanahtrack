@@ -15,6 +15,7 @@ import {
   PlusJakartaSans_700Bold,
 } from '@expo-google-fonts/plus-jakarta-sans';
 
+import { LangProvider, useLang } from '../src/lang';
 import { LiveProvider } from '../src/live';
 import { SessionProvider, useSession } from '../src/session';
 import { colors, fonts } from '../src/theme';
@@ -54,6 +55,15 @@ function Guard({ children }: { children: React.ReactNode }) {
 }
 
 export default function Layout() {
+  return (
+    <LangProvider>
+      <App />
+    </LangProvider>
+  );
+}
+
+function App() {
+  const { t } = useLang();
   const [fontsLoaded] = useFonts({
     Sora_400Regular,
     Sora_600SemiBold,
@@ -68,8 +78,8 @@ export default function Layout() {
 
   // A stalled animation must never keep somebody out of the app.
   useEffect(() => {
-    const t = setTimeout(finishSplash, 5000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(finishSplash, 5000);
+    return () => clearTimeout(timer);
   }, [finishSplash]);
 
   // Nothing is drawn until the fonts are in, so text never flashes in the
@@ -98,20 +108,21 @@ export default function Layout() {
             <Stack.Screen name="index" options={{ headerShown: false, animation: 'fade' }} />
             <Stack.Screen
               name="spend"
-              options={{ title: 'Record spending', presentation: 'modal', animation: 'slide_from_bottom' }}
+              options={{ title: t('Rekod belanja', 'Record spending'), presentation: 'modal', animation: 'slide_from_bottom' }}
             />
-            <Stack.Screen name="assistant" options={{ title: 'Pembantu Amanah' }} />
-            <Stack.Screen name="donate" options={{ title: 'Rekod derma' }} />
-            <Stack.Screen name="approvals" options={{ title: 'Kelulusan' }} />
-            <Stack.Screen name="people" options={{ title: 'Pengguna' }} />
-            <Stack.Screen name="password" options={{ title: 'Kata laluan' }} />
-            <Stack.Screen name="receipt/[reference]" options={{ title: 'Resit' }} />
-            <Stack.Screen name="count" options={{ title: 'Box count' }} />
-            <Stack.Screen name="ledger" options={{ title: 'Ledger' }} />
-            <Stack.Screen name="live" options={{ title: 'Live' }} />
-            <Stack.Screen name="alerts" options={{ title: 'Alerts' }} />
-            <Stack.Screen name="alert/[id]" options={{ title: 'Review alert' }} />
-            <Stack.Screen name="proof/[reference]" options={{ title: 'Entry proof' }} />
+            <Stack.Screen name="assistant" options={{ title: t('Pembantu Amanah', 'Amanah Assistant') }} />
+            <Stack.Screen name="donate" options={{ title: t('Rekod derma', 'Record donation') }} />
+            <Stack.Screen name="approvals" options={{ title: t('Kelulusan', 'Approvals') }} />
+            <Stack.Screen name="people" options={{ title: t('Pengguna', 'Users') }} />
+            <Stack.Screen name="password" options={{ title: t('Kata laluan', 'Password') }} />
+            <Stack.Screen name="settings" options={{ title: t('Tetapan', 'Settings') }} />
+            <Stack.Screen name="receipt/[reference]" options={{ title: t('Resit', 'Receipt') }} />
+            <Stack.Screen name="count" options={{ title: t('Kira tabung', 'Box count') }} />
+            <Stack.Screen name="ledger" options={{ title: t('Rekod kewangan', 'Financial records') }} />
+            <Stack.Screen name="live" options={{ title: t('Tabung sekarang', 'Box now') }} />
+            <Stack.Screen name="alerts" options={{ title: t('Amaran', 'Alerts') }} />
+            <Stack.Screen name="alert/[id]" options={{ title: t('Semak amaran', 'Review alert') }} />
+            <Stack.Screen name="proof/[reference]" options={{ title: t('Bukti rekod', 'Entry proof') }} />
           </Stack>
           <PushSetup />
           </LiveProvider>
