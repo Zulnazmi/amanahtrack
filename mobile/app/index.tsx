@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   RefreshControl,
   ScrollView,
@@ -10,7 +10,9 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { api, canApprove, canWrite, Fund } from '../src/api/client';
+import { fullTime } from '../src/format';
 import { useLive } from '../src/live';
+import { useRetry } from '../src/retry';
 import { useSession } from '../src/session';
 import { colors, fonts, radius, ringgit, space } from '../src/theme';
 import { BottomBar } from '../src/ui/BottomBar';
@@ -71,6 +73,9 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const latest = useRef(0);
 
   // A pushed alert count updates the badge and card without a pull to refresh.
   useEffect(() => {
@@ -80,6 +85,8 @@ export default function HomeScreen() {
   }, [live.openAlerts, live.criticalOpen]);
 
   const load = useCallback(async () => {
+    // Only the newest request may change the screen; a slow old one must not.
+    const turn = ++latest.current;
     try {
       const [f, v, a, w] = await Promise.all([
         api.funds(),
@@ -87,16 +94,23 @@ export default function HomeScreen() {
         api.alertSummary(),
         api.approvals('pending'),
       ]);
+      if (turn !== latest.current) return;
       setWaiting(w.filter((x) => x.can_decide).length);
       setFunds(f);
       setVerification(v);
       setAlertInfo(a);
+      setUpdatedAt(new Date().toISOString());
+      setFailures(0);
       setError(null);
     } catch (e) {
+      if (turn !== latest.current) return;
+      setFailures((n) => n + 1);
       setError(e instanceof Error ? e.message : 'Could not reach the ledger');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (turn === latest.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
@@ -106,6 +120,8 @@ export default function HomeScreen() {
     }, [load]),
   );
 
+  useRetry(failures, load);
+
   const cash = funds.find((f) => f.code === 'cash');
   const rest = funds.filter((f) => f.code !== 'cash');
   const spendable = rest.filter((f) => f.spendable && f.category === 'sadaqah');
@@ -114,6 +130,8 @@ export default function HomeScreen() {
 
   const total = rest.reduce((sum, f) => sum + parseFloat(f.balance), 0);
   const pending = cash ? parseFloat(cash.provisional) : 0;
+  const sealColor =
+    verification && !verification.intact ? colors.danger : error ? colors.brass : colors.green;
   const barWidth = width - 40 - 36;
 
   return (
@@ -162,11 +180,12 @@ export default function HomeScreen() {
         {error && (
           <View style={s.errorBar}>
             <Text style={s.errorText}>{error}</Text>
-            <Text style={s.errorHint}>Pull down to try again.</Text>
+            <Text style={s.errorHint}>Sedang cuba semula. Tarik ke bawah untuk cuba sekarang.</Text>
           </View>
         )}
 
-        {loading ? (
+        {loading || !updatedAt ? (
+          // Never show RM 0.00 for a balance that was not actually read
           <HomeSkeleton />
         ) : (
           <>
@@ -202,13 +221,17 @@ export default function HomeScreen() {
                 {verification && (
                   <View style={[s.sealPill, !verification.intact && s.sealPillBroken]}>
                     <Icon
-                      name="shield"
+                      name={error && verification.intact ? 'alert' : 'shield'}
                       size={13}
-                      color={verification.intact ? colors.green : colors.danger}
+                      color={sealColor}
                       strokeWidth={2}
                     />
-                    <Text style={[s.sealText, !verification.intact && { color: colors.danger }]}>
-                      {verification.intact ? 'Ledger sealed' : 'Chain broken'}
+                    <Text style={[s.sealText, { color: sealColor }]}>
+                      {!verification.intact
+                        ? 'Chain broken'
+                        : error
+                          ? 'Belum dikemas kini'
+                          : 'Ledger sealed'}
                     </Text>
                   </View>
                 )}
@@ -238,7 +261,11 @@ export default function HomeScreen() {
 
               <View style={s.heroFoot}>
                 <Text style={s.heroFootText}>
-                  {verification ? `${verification.checked} entries verified` : ''}
+                  {error
+                    ? `Kemas kini terakhir: ${fullTime(updatedAt)}`
+                    : verification
+                      ? `${verification.checked} ${verification.checked === 1 ? 'entry' : 'entries'} verified`
+                      : ''}
                 </Text>
                 {pending > 0 && (
                   <View style={s.pendingRow}>

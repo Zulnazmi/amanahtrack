@@ -81,7 +81,7 @@ export default function LiveScreen() {
         {devices.length === 0 ? (
           <FadeUp delay={80}>
             <View style={s.card}>
-              <Text style={s.cardMuted}>No box has reported yet.</Text>
+              <Text style={s.cardMuted}>{connected ? 'No box has reported yet.' : 'Waiting for the connection.'}</Text>
             </View>
           </FadeUp>
         ) : (
@@ -101,7 +101,7 @@ export default function LiveScreen() {
             <View style={s.emptyIcon}>
               <Icon name="pulse" size={24} color={colors.green} />
             </View>
-            <Text style={s.emptyTitle}>Nothing yet</Text>
+            <Text style={s.emptyTitle}>{connected ? 'Nothing yet' : 'Not connected'}</Text>
             <Text style={s.emptyBody}>
               Open the box door or tap the box and the event appears here within a second.
             </Text>

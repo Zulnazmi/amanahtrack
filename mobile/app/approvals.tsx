@@ -3,6 +3,7 @@ import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { api, Approval, Fund } from '../src/api/client';
+import { useRetry } from '../src/retry';
 import { fullTime } from '../src/format';
 import { colors, ringgit } from '../src/theme';
 import { PURPOSES } from './spend';
@@ -31,18 +32,24 @@ export default function ApprovalsScreen() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
+
   const load = useCallback(async () => {
     try {
       const [a, f] = await Promise.all([api.approvals(tab === 'pending' ? 'pending' : undefined), api.funds()]);
       setRows(a);
       setFunds(f);
+      setLoadError(null);
+      setFailures(0);
     } catch (e) {
-      setRows((r) => r ?? []);
-      setNotice({ ok: false, text: (e as Error).message });
+      setLoadError((e as Error).message);
+      setFailures((n) => n + 1);
     }
   }, [tab]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  useRetry(failures, load);
 
   function start(id: string, action: Action) {
     setNotice(null);
@@ -73,12 +80,17 @@ export default function ApprovalsScreen() {
       <Text style={form.lede}>Wang keluar dan pembetulan perlu dua orang. Orang yang meminta tidak boleh meluluskan permintaannya sendiri.</Text>
       <Choices
         value={tab}
-        onChange={setTab}
+        onChange={(t) => {
+          if (t === tab) return;
+          setRows(null);
+          setTab(t);
+        }}
         options={[{ value: 'pending', label: 'Menunggu' }, { value: 'all', label: 'Semua' }]}
       />
       {notice && <Notice ok={notice.ok} text={notice.text} />}
-      {rows === null && <ActivityIndicator color={colors.green} />}
-      {rows?.length === 0 && <Text style={form.text}>Tiada permintaan.</Text>}
+      {loadError && <Notice ok={false} text={`${loadError} Sedang cuba semula.`} />}
+      {rows === null && !loadError && <ActivityIndicator color={colors.green} />}
+      {!loadError && rows?.length === 0 && <Text style={form.text}>Tiada permintaan.</Text>}
       {rows?.map((a) => (
         <View key={a.id} style={form.card}>
           <Text style={form.faint}>{a.kind === 'spend' ? 'Perbelanjaan' : `Pembetulan ${a.target_reference}`} · {STATUS[a.status]}</Text>

@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 
 import { Alert, AlertStatus, api } from '../src/api/client';
 import { timeAgo } from '../src/format';
+import { useRetry } from '../src/retry';
 import { colors, fonts, radius } from '../src/theme';
 import { Icon } from '../src/ui/Icon';
 import { FadeUp, PressScale, Skeleton } from '../src/ui/motion';
@@ -19,11 +20,15 @@ export default function AlertsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [failures, setFailures] = useState(0);
+
   const load = useCallback(async () => {
     try {
       setAlerts(await api.alerts(filter === 'open' ? 'open' : undefined));
       setError(null);
+      setFailures(0);
     } catch (e) {
+      setFailures((n) => n + 1);
       setError(e instanceof Error ? e.message : 'Could not load alerts');
     } finally {
       setLoading(false);
@@ -36,6 +41,7 @@ export default function AlertsScreen() {
       load();
     }, [load]),
   );
+  useRetry(failures, load);
 
   return (
     <View style={s.screen}>
@@ -57,7 +63,9 @@ export default function AlertsScreen() {
             <PressScale
               key={f}
               onPress={() => {
+                if (f === filter) return;
                 setLoading(true);
+                setAlerts([]);
                 setFilter(f);
               }}
               style={[s.chip, filter === f && s.chipOn]}
@@ -81,7 +89,7 @@ export default function AlertsScreen() {
             <Skeleton height={104} radius={20} />
             <Skeleton height={104} radius={20} />
           </View>
-        ) : alerts.length === 0 ? (
+        ) : error && alerts.length === 0 ? null : alerts.length === 0 ? (
           <FadeUp style={s.empty}>
             <View style={s.emptyIcon}>
               <Icon name="shield" size={26} color={colors.green} />

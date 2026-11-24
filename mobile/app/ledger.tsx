@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 
 import { api, Txn } from '../src/api/client';
+import { useRetry } from '../src/retry';
 import { colors, radius, ringgit, space, type } from '../src/theme';
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -18,15 +19,26 @@ export default function LedgerScreen() {
   const [txns, setTxns] = useState<Txn[]>([]);
   const [seal, setSeal] = useState<{ checked: number; intact: boolean; head_hash: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.all([api.transactions(50), api.verify()])
       .then(([t, v]) => {
         setTxns(t);
         setSeal(v);
+        setError(null);
+        setFailures(0);
+      })
+      .catch((e: Error) => {
+        setError(e.message);
+        setFailures((n) => n + 1);
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useFocusEffect(load);
+  useRetry(failures, load);
 
   if (loading) {
     return (
@@ -40,7 +52,13 @@ export default function LedgerScreen() {
     <ScrollView style={g.screen} contentContainerStyle={g.content}>
       <Text style={g.title}>Lejar</Text>
 
-      {seal && (
+      {error && (
+        <View style={g.error}>
+          <Text style={g.errorText}>{error} Sedang cuba semula.</Text>
+        </View>
+      )}
+
+      {seal && (!error || !seal.intact) && (
         <View style={g.sealCard}>
           <Text style={g.sealTitle}>
             {seal.intact ? 'Rantaian utuh' : 'Rantaian terputus'}
@@ -51,7 +69,8 @@ export default function LedgerScreen() {
         </View>
       )}
 
-      {txns.length === 0 && (
+      {/* An unread ledger must never look like an empty one */}
+      {!error && txns.length === 0 && (
         <View style={g.empty}>
           <Text style={g.emptyTitle}>Belum ada entri</Text>
           <Text style={g.emptyBody}>
@@ -104,6 +123,14 @@ const g = StyleSheet.create({
   sealTitle: { ...type.small, color: colors.green, fontWeight: '600' },
   sealBody: { ...type.small, color: colors.inkSoft, marginTop: 2 },
   sealHash: { ...type.mono, color: colors.inkFaint, marginTop: space.xs },
+
+  error: {
+    padding: space.md,
+    backgroundColor: colors.dangerSoft,
+    borderRadius: radius.md,
+    marginBottom: space.lg,
+  },
+  errorText: { ...type.small, color: colors.danger },
 
   empty: { padding: space.xl, alignItems: 'center' },
   emptyTitle: { ...type.heading, color: colors.inkSoft },
