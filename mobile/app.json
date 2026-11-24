@@ -8,7 +8,18 @@
     "userInterfaceStyle": "light",
     "plugins": [
       "expo-router",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "AmanahTrack menggunakan mikrofon hanya apabila anda menekan butang cakap.",
+          "speechRecognitionPermission": "AmanahTrack menukar suara anda kepada teks soalan.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.tts"
+          ]
+        }
+      ]
     ],
     "android": {
       "package": "my.amanahtrack.app",

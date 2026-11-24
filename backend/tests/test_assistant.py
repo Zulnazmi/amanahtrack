@@ -95,6 +95,11 @@ def test_details_are_read_exactly():
 
     assert u("nak bayar bil api RM1,250.50").amount == Decimal("1250.50")
     assert u("rekod derma rm 50 zakat").amount == Decimal("50")
+    assert u("rekod derma 50 ringgit untuk zakat").amount == Decimal("50")  # how phones hear it
+    assert u("rekod derma lima puluh ringgit").amount is None
+    assert u("rekod derma 1,508.50 ringgit").amount == Decimal("1508.50")
+    for partial in ("50 ringgit 50 sen", "2 ribu 50 ringgit", "dua puluh 5 ringgit", "rm 2 ribu"):
+        assert u(f"rekod derma {partial}").amount is None, partial
     assert u("boleh guna zakat untuk bumbung").purpose is PurposeCode.MOSQUE_MAINTENANCE
     assert u("infaq anak yatim baki").funds == ["yatim"] and u("infaq anak yatim baki").purpose is None
     assert u("kutipan Mac").period.start == date(2026, 3, 1)

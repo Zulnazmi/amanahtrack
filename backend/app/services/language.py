@@ -310,6 +310,13 @@ _UNSUPPORTED = ("raya", "aidilfitri", "aidiladha", "syawal", "rejab", "syaaban",
                 "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "jam", "hour")
 
 
+_NUMBER_WORDS = set(
+    "satu dua tiga empat lima enam tujuh lapan sembilan sepuluh sebelas puluh belas seratus ratus "
+    "seribu ribu juta setengah sen one two three four five six seven eight nine ten twenty thirty "
+    "forty fifty sixty seventy eighty ninety hundred thousand million half cents k".split()
+)
+
+
 def understand(text: str, now: date, fund_words: dict[str, list[str]]) -> Question:
     """fund_words: fund code -> names this mosque uses for it, normalised."""
     t = normalise(text)
@@ -333,10 +340,12 @@ def understand(text: str, now: date, fund_words: dict[str, list[str]]) -> Questi
             q.intent = intent
             break
 
-    # An amount is only an amount with RM in front or sen behind it
-    money = re.search(r"\brm ?(\d{1,9}(?:\.\d{1,2})?)\b|\b(\d{1,9}\.\d{2})\b", t)
+    # An amount is only an amount with RM, ringgit or sen
+    money = re.search(
+        r"\brm ?(\d{1,9}(?:\.\d{1,2})?)\b|\b(\d{1,9}(?:\.\d{1,2})?) ringgit\b|\b(\d{1,9}\.\d{2})\b", t
+    )
     if money:
-        q.amount = Decimal(money[1] or money[2])
+        q.amount = Decimal(money[1] or money[2] or money[3])
         left = left.replace(money[0], " ")
 
     for key, phrases in _PERIODS:
@@ -420,6 +429,9 @@ def understand(text: str, now: date, fund_words: dict[str, list[str]]) -> Questi
         for p in ps:
             known.update(p.split())
     q.unknown = [w for w in dict.fromkeys(left.split()) if w not in known]
+    # "2 ribu 50 ringgit" is not RM 50: no amount is better than part of one
+    if q.amount is not None and any(w[0].isdigit() or w in _NUMBER_WORDS for w in q.unknown):
+        q.amount = None
     return q
 
 
