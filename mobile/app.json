@@ -2,7 +2,7 @@
   "expo": {
     "name": "AmanahTrack",
     "slug": "amanahtrack",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "scheme": "amanahtrack",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -23,6 +23,7 @@
     ],
     "android": {
       "package": "my.amanahtrack.app",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#06100D"
