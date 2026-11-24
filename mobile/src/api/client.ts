@@ -87,6 +87,21 @@ export interface ReceiptInfo {
   valid: boolean;
 }
 
+export interface Answer {
+  answered: boolean;
+  intent: string | null;
+  lang: 'ms' | 'en';
+  text_ms: string;
+  text_en: string;
+  rows: { label_ms: string; label_en: string; value: string }[];
+  basis_ms: string | null;
+  basis_en: string | null;
+  links: { label_ms: string; label_en: string; href: string }[];
+  suggestions: string[];
+  context: { intent: string; funds: string[]; period: string | null } | null;
+  as_of: string;
+}
+
 export interface Person {
   id: string;
   name: string;
@@ -328,6 +343,12 @@ export async function login(email: string, password: string): Promise<Session> {
 
 export const api = {
   funds: () => request<Fund[]>(`/i/${SLUG}/funds`),
+
+  ask: (question: string, context: Answer['context']) =>
+    request<Answer>(`/i/${SLUG}/assistant`, {
+      method: 'POST',
+      body: JSON.stringify({ question, context }),
+    }),
 
   transactions: (limit = 30) =>
     request<Txn[]>(`/i/${SLUG}/transactions?limit=${limit}`),

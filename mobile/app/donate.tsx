@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ScrollView, Text } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { api, Fund, newRequestId } from '../src/api/client';
 import { parseMoney } from '../src/format';
@@ -11,8 +11,10 @@ import { Button, Choices, Field, form, Notice } from '../src/ui/Form';
 export default function DonateScreen() {
   const router = useRouter();
   const [funds, setFunds] = useState<Fund[]>([]);
-  const [fund, setFund] = useState('');
-  const [amount, setAmount] = useState('');
+  // The assistant may fill these in; the person still checks and confirms
+  const given = useLocalSearchParams<{ fund?: string; amount?: string }>();
+  const [fund, setFund] = useState(given.fund ?? '');
+  const [amount, setAmount] = useState(given.amount ?? '');
   const [description, setDescription] = useState('');
   const [donor, setDonor] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +24,11 @@ export default function DonateScreen() {
   useEffect(() => {
     api
       .funds()
-      .then((f) => setFunds(f.filter((x) => x.code !== 'cash')))
+      .then((f) => {
+        const usable = f.filter((x) => x.code !== 'cash');
+        setFunds(usable);
+        setFund((c) => (usable.some((x) => x.code === c) ? c : ''));
+      })
       .catch((e: Error) => setError(e.message));
   }, []);
 

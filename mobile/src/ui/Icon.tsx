@@ -16,7 +16,8 @@ export type IconName =
   | 'chevron'
   | 'check'
   | 'x'
-  | 'pulse';
+  | 'pulse'
+  | 'chat';
 
 /** Stroke icons drawn on a 24 grid, same family as the design mockups. */
 export function Icon({
@@ -115,6 +116,9 @@ export function Icon({
       {name === 'chevron' && <Path {...p} d="M9 6l6 6-6 6" />}
       {name === 'check' && <Path {...p} d="M5 12.5l4.5 4.5L19 7.5" />}
       {name === 'x' && <Path {...p} d="M6 6l12 12M18 6L6 18" />}
+      {name === 'chat' && (
+        <Path {...p} d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+      )}
       {name === 'pulse' && <Path {...p} d="M3 12h4l2.5-6 4 12 2.5-6H21" />}
     </Svg>
   );

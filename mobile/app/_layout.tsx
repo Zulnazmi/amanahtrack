@@ -100,6 +100,7 @@ export default function Layout() {
               name="spend"
               options={{ title: 'Record spending', presentation: 'modal', animation: 'slide_from_bottom' }}
             />
+            <Stack.Screen name="assistant" options={{ title: 'Pembantu Amanah' }} />
             <Stack.Screen name="donate" options={{ title: 'Rekod derma' }} />
             <Stack.Screen name="approvals" options={{ title: 'Kelulusan' }} />
             <Stack.Screen name="people" options={{ title: 'Pengguna' }} />

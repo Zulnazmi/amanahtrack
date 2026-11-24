@@ -1302,6 +1302,7 @@ def verify_ledger(
     }
 
 
-from app.api import daily  # noqa: E402  (needs everything above)
+from app.api import assistant, daily  # noqa: E402  (needs everything above)
 
 app.include_router(daily.router)
+app.include_router(assistant.router)

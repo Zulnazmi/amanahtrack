@@ -41,12 +41,15 @@ export const PURPOSES: { code: string; label: string; group: string }[] = [
 
 export default function SpendScreen() {
   const router = useRouter();
-  const { fund: fundParam } = useLocalSearchParams<{ fund?: string }>();
+  const given = useLocalSearchParams<{ fund?: string; amount?: string; purpose?: string }>();
+  const fundParam = given.fund;
 
   const [funds, setFunds] = useState<Fund[]>([]);
   const [fundCode, setFundCode] = useState(fundParam ?? '');
-  const [purpose, setPurpose] = useState('');
-  const [amount, setAmount] = useState('');
+  const [purpose, setPurpose] = useState(
+    PURPOSES.some((p) => p.code === given.purpose) ? given.purpose! : '',
+  );
+  const [amount, setAmount] = useState(given.amount ?? '');
   const [description, setDescription] = useState('');
 
   const [verdict, setVerdict] = useState<RuleVerdict | null>(null);

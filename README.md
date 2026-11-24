@@ -19,12 +19,13 @@ see [LICENSE](LICENSE).
 | Manual counting with named witnesses | working, tested |
 | JWT auth, four roles, per-institution isolation, separation of duties | working, tested |
 | REST API | working |
+| Pembantu Amanah: questions, forecasts and warnings (rules and statistics, no language model) | working, tested |
 | Mobile app (alerts, photo evidence, verify, per-entry proof) | working |
 | Box client (Raspberry Pi 5) | runs in simulation mode and posts signed events |
 | Live sensor feed and push notifications | built, tested against simulated boxes |
 | Cloud deployment | guide in CLOUD_SETUP.md, not yet run in production |
 
-114 tests pass (2 need a PostgreSQL test database). In the demo the box readings and alert photos are
+210 tests pass (2 need a PostgreSQL test database). In the demo the box readings and alert photos are
 **simulated**. The gaps are listed honestly because a demo that hides them
 falls apart under a judge's questions.
 

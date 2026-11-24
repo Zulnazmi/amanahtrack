@@ -271,6 +271,7 @@ export default function HomeScreen() {
 
             <FadeUp delay={160}>
               <View style={s.actions}>
+                <Action icon="chat" label="Tanya Pembantu" href="/assistant" />
                 {writable && <Action icon="box" label="Rekod derma" href="/donate" />}
                 {writable && <Action icon="count" label="Kira tabung" href="/count" />}
                 <Action
