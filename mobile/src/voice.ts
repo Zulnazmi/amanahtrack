@@ -9,8 +9,8 @@ import type { Lang } from './speakable';
  * Hearing and speaking, both done by the phone.
  *
  * The microphone opens only on a tap and closes when the person stops talking,
- * leaves the screen or leaves the app. Nothing is sent as a question until the
- * person has seen the words and pressed send.
+ * leaves the screen or leaves the app. The words are shown before they are sent
+ * as a question, with a moment to stop them.
  */
 
 const LISTEN_LIMIT_MS = 30000;
@@ -27,7 +27,11 @@ const PROBLEMS: Record<string, string> = {
 };
 const UNKNOWN = 'Pengecaman suara tidak berjaya. Cuba lagi atau taip soalan anda.';
 
-export function useListening(onWords: (words: string) => void) {
+export function useListening(
+  onWords: (words: string) => void,
+  onFinished: () => void,
+  onLoudness: (level: number) => void,
+) {
   const [listening, setListening] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // Each tap gets a number, so a late permission answer cannot open the mic
@@ -38,6 +42,9 @@ export function useListening(onWords: (words: string) => void) {
   // True from opening the microphone until it ends, so words that arrive late
   // cannot overwrite a question already corrected or sent.
   const open = useRef(false);
+
+  // Only a clean ending sends a question; an error leaves the words to be checked.
+  const failed = useRef(false);
 
   const closed = useCallback(() => {
     open.current = false;
@@ -62,12 +69,18 @@ export function useListening(onWords: (words: string) => void) {
     if (words) onWords(words.slice(0, 300));
   });
   useSpeechRecognitionEvent('error', (e) => {
-    if (open.current && e.error !== 'aborted') setProblem(PROBLEMS[e.error] ?? UNKNOWN);
+    if (!open.current) return;
+    failed.current = true;
+    if (e.error !== 'aborted') setProblem(PROBLEMS[e.error] ?? UNKNOWN);
   });
   useSpeechRecognitionEvent('end', () => {
     if (!open.current) return;
     closed();
     setListening(false);
+    if (!failed.current) onFinished();
+  });
+  useSpeechRecognitionEvent('volumechange', (e) => {
+    if (open.current) onLoudness(Math.max(0, Math.min(1, e.value / 8)));
   });
 
   useEffect(() => {
@@ -103,12 +116,14 @@ export function useListening(onWords: (words: string) => void) {
         await Speech.stop();
         if (mine !== turn.current) return;
         open.current = true;
+        failed.current = false;
         limit.current = setTimeout(cancel, LISTEN_LIMIT_MS);
         ExpoSpeechRecognitionModule.start({
           lang: lang === 'en' ? 'en-US' : 'ms-MY',
           interimResults: true,
           continuous: false,
           maxAlternatives: 1,
+          volumeChangeEventOptions: { enabled: true, intervalMillis: 80 },
         });
       } catch {
         if (mine !== turn.current) return;
@@ -145,7 +160,7 @@ async function voiceFor(lang: Lang): Promise<string | null> {
   return null;
 }
 
-export function useSpeaking() {
+export function useSpeaking(onWord: () => void) {
   const [speaking, setSpeaking] = useState<number | null>(null);
   const [silent, setSilent] = useState<string | null>(null);
   const turn = useRef(0);
@@ -179,12 +194,15 @@ export function useSpeaking() {
       Speech.speak(text.slice(0, Math.min(Speech.maxSpeechInputLength || 3900, 3900)), {
         language,
         rate: 0.95,
+        onBoundary: () => {
+          if (mine === turn.current) onWord();
+        },
         onDone: done,
         onStopped: done,
         onError: done,
       });
     },
-    [hush],
+    [hush, onWord],
   );
 
   useEffect(() => {

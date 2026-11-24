@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  Animated,
+  AppState,
+  Keyboard,
   KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api, Answer } from '../src/api/client';
@@ -18,14 +22,17 @@ import { fullTime } from '../src/format';
 import { Lang, spokenAnswer } from '../src/speakable';
 import { colors, fonts, radius } from '../src/theme';
 import { Icon } from '../src/ui/Icon';
+import { FadeUp } from '../src/ui/motion';
+import { Mood, Presence } from '../src/ui/Presence';
 import { useListening, useSpeaking } from '../src/voice';
 
 /**
- * Pembantu Amanah.
+ * Pembantu Amanah: a conversation, one exchange on the stage at a time.
  *
  * Every figure comes from the server's ledger code. The screen shows how each
  * figure was worked out, and a failed question is shown as failed, never as an
- * empty answer.
+ * empty answer. The assistant only reads, so a spoken question may be sent
+ * without a press, after a pause in which it can be stopped.
  */
 
 type Turn = { id: number; question: string; answer?: Answer; error?: string };
@@ -39,28 +46,106 @@ const FIRST = [
   'Boleh guna zakat untuk bumbung?',
 ];
 
-const VOICE_OK = 'amanah.voice.ok';
+// Asked again: spoken questions are now sent by themselves
+const VOICE_OK = 'amanah.voice.ok2';
+const SEND_PAUSE_MS = 1600;
+
+const SAYS: Record<Lang, Record<Mood | 'sending', string>> = {
+  ms: {
+    idle: 'Tekan saya dan tanya',
+    listening: 'Saya sedang mendengar…',
+    thinking: 'Sekejap, saya semak lejar…',
+    speaking: 'Tekan untuk berhenti',
+    trouble: 'Saya tidak dapat menjawab',
+    sending: 'Menghantar… tekan untuk batal',
+  },
+  en: {
+    idle: 'Tap me and ask',
+    listening: 'I am listening…',
+    thinking: 'One moment, checking the ledger…',
+    speaking: 'Tap to stop',
+    trouble: 'I could not answer',
+    sending: 'Sending… tap to cancel',
+  },
+};
+
+function useKeyboard() {
+  const [up, setUp] = useState(false);
+  useEffect(() => {
+    const ios = Platform.OS === 'ios';
+    const a = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', () => setUp(true));
+    const b = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', () => setUp(false));
+    return () => {
+      a.remove();
+      b.remove();
+    };
+  }, []);
+  return up;
+}
 
 export default function AssistantScreen() {
   const insets = useSafeAreaInsets();
+  const { height, width } = useWindowDimensions();
+  const typing = useKeyboard();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState(false);
   const working = useRef(false);
   const next = useRef(0);
   const context = useRef<Answer['context']>(null);
-  const scroll = useRef<ScrollView>(null);
 
   const [lang, setLang] = useState<Lang>('ms');
   const [asking, setAsking] = useState(false);
-  // A spoken question gets a spoken answer; a typed one stays quiet.
-  const spoken = useRef(false);
+
+  // How loud the voice is right now, shown by the avatar
+  const level = useRef(new Animated.Value(0)).current;
+  const loud = useCallback(
+    (to: number) => {
+      Animated.timing(level, { toValue: to, duration: 90, useNativeDriver: true }).start();
+    },
+    [level],
+  );
+  const beat = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(level, { toValue: 0.55 + Math.random() * 0.4, duration: 70, useNativeDriver: true }),
+      Animated.timing(level, { toValue: 0.15, duration: 320, useNativeDriver: true }),
+    ]).start();
+  }, [level]);
+
+  // Words heard by voice wait a moment before they go, so they can be stopped
+  const heard = useRef('');
+  const [sending, setSending] = useState(false);
+  const wait = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hold = useCallback(() => {
+    if (wait.current) clearTimeout(wait.current);
+    wait.current = null;
+    setSending(false);
+  }, []);
   const onWords = useCallback((words: string) => {
-    spoken.current = true;
+    heard.current = words;
     setText(words);
   }, []);
-  const { listening, problem, setProblem, start, stop, cancel } = useListening(onWords);
-  const { speaking, silent, speak, hush } = useSpeaking();
+  const askRef = useRef<(q: string, retryOf?: number, aloud?: boolean) => void>(() => {});
+  const onFinished = useCallback(() => {
+    if (!heard.current) return;
+    setSending(true);
+    wait.current = setTimeout(() => {
+      wait.current = null;
+      setSending(false);
+      const words = heard.current;
+      heard.current = '';
+      setText('');
+      askRef.current(words, undefined, true);
+    }, SEND_PAUSE_MS);
+  }, []);
+
+  const { listening, problem, setProblem, start, stop, cancel } = useListening(onWords, onFinished, loud);
+  const { speaking, silent, speak, hush } = useSpeaking(beat);
+
+  useEffect(() => {
+    if (!listening && speaking === null) loud(0);
+  }, [listening, speaking, loud]);
 
   // Opening another screen leaves this one mounted underneath it
   const here = useRef(true);
@@ -69,38 +154,53 @@ export default function AssistantScreen() {
       here.current = true;
       return () => {
         here.current = false;
+        hold();
         cancel();
         hush();
       };
-    }, [cancel, hush]),
+    }, [cancel, hold, hush]),
   );
 
-  const ask = useCallback(async (question: string, retryOf?: number, aloud = false) => {
-    const asked = question.trim();
-    if (!asked || working.current) return;
-    working.current = true;
-    setBusy(true);
-    cancel();
-    hush();
-    const id = retryOf ?? next.current++;
-    setTurns((t) =>
-      retryOf === undefined
-        ? [...t, { id, question: asked }]
-        : t.map((x) => (x.id === id ? { id, question: asked } : x)),
-    );
-    try {
-      const answer = await api.ask(asked, context.current);
-      context.current = answer.context;
-      setTurns((t) => t.map((x) => (x.id === id ? { ...x, answer } : x)));
-      if (aloud && here.current) speak(id, spokenAnswer(answer), answer.lang);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : 'Tidak dapat menjawab.';
-      setTurns((t) => t.map((x) => (x.id === id ? { ...x, error } : x)));
-    } finally {
-      working.current = false;
-      setBusy(false);
-    }
-  }, [cancel, hush, speak]);
+  // A question is not sent on its own while nobody is looking
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') hold();
+    });
+    return () => sub.remove();
+  }, [hold]);
+
+  const ask = useCallback(
+    async (question: string, retryOf?: number, aloud = false) => {
+      const asked = question.trim();
+      if (!asked || working.current) return;
+      working.current = true;
+      setBusy(true);
+      setHistory(false);
+      hold();
+      cancel();
+      hush();
+      const id = retryOf ?? next.current++;
+      setTurns((t) =>
+        retryOf === undefined
+          ? [...t, { id, question: asked }]
+          : t.map((x) => (x.id === id ? { id, question: asked } : x)),
+      );
+      try {
+        const answer = await api.ask(asked, context.current);
+        context.current = answer.context;
+        setTurns((t) => t.map((x) => (x.id === id ? { ...x, answer } : x)));
+        if (aloud && here.current) speak(id, spokenAnswer(answer), answer.lang);
+      } catch (e) {
+        const error = e instanceof Error ? e.message : 'Tidak dapat menjawab.';
+        setTurns((t) => t.map((x) => (x.id === id ? { ...x, error } : x)));
+      } finally {
+        working.current = false;
+        setBusy(false);
+      }
+    },
+    [cancel, hold, hush, speak],
+  );
+  askRef.current = ask;
 
   const started = useRef(false);
   useEffect(() => {
@@ -111,14 +211,17 @@ export default function AssistantScreen() {
 
   function send() {
     if (working.current || !text.trim()) return;
-    ask(text, undefined, spoken.current);
-    spoken.current = false;
+    ask(text, undefined, heard.current !== '');
+    heard.current = '';
     setText('');
   }
 
   async function talk() {
+    if (sending) return hold();
     if (listening) return stop();
+    if (speaking !== null) return hush();
     if (working.current) return;
+    Keyboard.dismiss();
     const agreed = await AsyncStorage.getItem(VOICE_OK).catch(() => null);
     if (!here.current) return;
     if (agreed) listen();
@@ -126,9 +229,11 @@ export default function AssistantScreen() {
   }
 
   function listen() {
+    hold();
     hush();
-    spoken.current = false;
+    heard.current = '';
     setText('');
+    setHistory(false);
     start(lang);
   }
 
@@ -140,111 +245,172 @@ export default function AssistantScreen() {
 
   const last = turns[turns.length - 1];
   const chips = last?.answer?.suggestions.length ? last.answer.suggestions : turns.length < 2 ? FIRST : [];
+  const trouble = problem ?? silent;
+  const mood: Mood = listening
+    ? 'listening'
+    : busy
+      ? 'thinking'
+      : speaking !== null
+        ? 'speaking'
+        : trouble || last?.error
+          ? 'trouble'
+          : 'idle';
+  const says = SAYS[lang];
+  const status = sending ? says.sending : trouble && mood === 'trouble' ? trouble : says[mood];
+  const live = listening || sending;
+  const size = typing || history ? 92 : Math.min(width * 0.62, height * 0.3, 260);
+  const shown = history ? turns : last ? [last] : [];
 
   return (
     <KeyboardAvoidingView style={s.screen} behavior="padding" keyboardVerticalOffset={insets.top + 56}>
-      <ScrollView
-        ref={scroll}
-        contentContainerStyle={s.content}
-        keyboardShouldPersistTaps="handled"
-        onContentSizeChange={() => turns.length > 1 && scroll.current?.scrollToEnd({ animated: true })}
-      >
-        <Text style={s.lede}>
-          Jawapan dikira daripada lejar masjid anda. Pembantu hanya membaca; ia tidak merekod atau
-          meluluskan apa-apa.
-        </Text>
-
-        {turns.map((t) => (
-          <View key={t.id} style={{ gap: 10 }}>
-            <View style={s.question}>
-              <Text style={s.questionText}>{t.question}</Text>
-            </View>
-            {t.answer ? (
-              <AnswerCard
-                a={t.answer}
-                speaking={speaking === t.id}
-                onSpeak={() =>
-                  speaking === t.id ? hush() : speak(t.id, spokenAnswer(t.answer!), t.answer!.lang)
-                }
-              />
-            ) : t.error ? (
-              <View style={s.error} accessibilityLiveRegion="polite">
-                <Text style={s.errorText}>{t.error}</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Cuba lagi"
-                  style={s.retry}
-                  onPress={() => ask(t.question, t.id)}
-                >
-                  <Text style={s.errorText}>Cuba lagi</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <ActivityIndicator color={colors.green} style={{ alignSelf: 'flex-start' }} />
-            )}
-          </View>
-        ))}
-
-        {!busy && chips.length > 0 && (
-          <View style={s.chips}>
-            {chips.map((c) => (
+      <Stack.Screen
+        options={{
+          headerRight: () =>
+            turns.length > 1 ? (
               <Pressable
-                key={c}
                 accessibilityRole="button"
-                accessibilityLabel={c}
-                onPress={() => ask(c)}
-                style={s.chip}
+                accessibilityLabel={history ? 'Tutup sejarah' : 'Sejarah'}
+                onPress={() => setHistory((h) => !h)}
+                style={s.headerBtn}
               >
-                <Text style={s.chipText}>{c}</Text>
+                <Text style={s.chipText}>{history ? 'Tutup' : 'Sejarah'}</Text>
               </Pressable>
-            ))}
+            ) : null,
+        }}
+      />
+
+      <View style={s.stage}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            sending
+              ? 'Batal hantar'
+              : listening
+                ? 'Berhenti mendengar'
+                : speaking !== null
+                  ? 'Berhenti membaca'
+                  : 'Cakap'
+          }
+          accessibilityState={{ busy, disabled: busy }}
+          disabled={busy}
+          onPress={talk}
+        >
+          <Presence mood={mood} level={level} size={size} />
+        </Pressable>
+        <Text
+          style={[
+            s.says,
+            mood === 'trouble' && { color: colors.danger },
+            mood === 'listening' && { color: colors.brass },
+          ]}
+          accessibilityLiveRegion="polite"
+        >
+          {status}
+        </Text>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+        {asking ? (
+          <View style={s.sheet}>
+            <Text style={s.sheetTitle}>Tanya dengan suara</Text>
+            <Text style={s.sheetText}>
+              Mikrofon dibuka hanya apabila anda menekan Pembantu. Telefon menukar suara kepada teks
+              dan mungkin menghantar audio kepada penyedianya, seperti Google atau Apple. AmanahTrack
+              tidak menyimpan audio. Soalan dihantar selepas anda berhenti bercakap, dan boleh
+              dibatalkan. Jangan sebut nama penderma.
+            </Text>
+            <View style={s.chips}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Setuju dan cakap" style={s.chip} onPress={agree}>
+                <Text style={s.chipText}>Setuju dan cakap</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Tidak, saya taip"
+                style={s.chip}
+                onPress={() => setAsking(false)}
+              >
+                <Text style={s.chipText}>Tidak, saya taip</Text>
+              </Pressable>
+            </View>
           </View>
+        ) : live ? (
+          <Text style={s.caption} accessibilityLiveRegion="polite">
+            {text || '…'}
+          </Text>
+        ) : (
+          shown.map((t) => (
+            <FadeUp key={`${t.id}-${t.answer ? 'a' : t.error ? 'e' : 'q'}`} style={{ gap: 12 }}>
+              {t.id === 0 && !history ? (
+                <Text style={s.hello}>Assalamualaikum. Saya Pembantu Amanah.</Text>
+              ) : (
+                <Text style={s.you}>“{t.question}”</Text>
+              )}
+              {t.answer ? (
+                <AnswerCard
+                  a={t.answer}
+                  speaking={speaking === t.id}
+                  onSpeak={() =>
+                    speaking === t.id ? hush() : speak(t.id, spokenAnswer(t.answer!), t.answer!.lang)
+                  }
+                />
+              ) : t.error ? (
+                <View style={s.error} accessibilityLiveRegion="polite">
+                  <Text style={s.errorText}>{t.error}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Cuba lagi"
+                    style={s.retry}
+                    onPress={() => ask(t.question, t.id)}
+                  >
+                    <Text style={s.errorText}>Cuba lagi</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </FadeUp>
+          ))
+        )}
+        {!live && !asking && (
+          <Text style={s.lede}>
+            Jawapan dikira daripada lejar masjid anda. Pembantu hanya membaca; ia tidak merekod atau
+            meluluskan apa-apa.
+          </Text>
         )}
       </ScrollView>
 
-      {asking && (
-        <View style={s.sheet}>
-          <Text style={s.sheetTitle}>Tanya dengan suara</Text>
-          <Text style={s.sheetText}>
-            Mikrofon dibuka hanya apabila anda menekan butang cakap. Telefon menukar suara kepada
-            teks dan mungkin menghantar audio kepada penyedianya, seperti Google atau Apple.
-            AmanahTrack tidak menyimpan audio. Jangan sebut nama penderma.
-          </Text>
-          <View style={s.chips}>
-            <Pressable accessibilityRole="button" accessibilityLabel="Setuju dan cakap" style={s.chip} onPress={agree}>
-              <Text style={s.chipText}>Setuju dan cakap</Text>
+      {!busy && !live && !asking && !typing && chips.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ flexGrow: 0 }}
+          contentContainerStyle={s.strip}
+          keyboardShouldPersistTaps="handled"
+        >
+          {chips.map((c) => (
+            <Pressable key={c} accessibilityRole="button" accessibilityLabel={c} onPress={() => ask(c)} style={s.chip}>
+              <Text style={s.chipText}>{c}</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Tidak, saya taip" style={s.chip} onPress={() => setAsking(false)}>
-              <Text style={s.chipText}>Tidak, saya taip</Text>
-            </Pressable>
-          </View>
-        </View>
+          ))}
+        </ScrollView>
       )}
-      {!asking && (
-        <View style={s.status} accessibilityLiveRegion="polite">
-          <Text style={[s.statusText, !listening && { color: problem || silent ? colors.danger : colors.inkFaint }]}>
-            {listening
-              ? lang === 'en' ? 'Listening… check the words, then send.' : 'Sedang mendengar… semak, kemudian hantar.'
-              : problem ?? silent ?? 'Bahasa suara'}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={lang === 'en' ? 'Bahasa suara: English' : 'Bahasa suara: BM'}
-            disabled={listening}
-            onPress={() => setLang(lang === 'ms' ? 'en' : 'ms')}
-            style={[s.lang, listening && { opacity: 0.4 }]}
-          >
-            <Text style={s.chipText}>{lang === 'en' ? 'EN' : 'BM'}</Text>
-          </Pressable>
-        </View>
-      )}
+
       <View style={[s.bar, { paddingBottom: 12 + insets.bottom }]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={lang === 'en' ? 'Bahasa suara: English' : 'Bahasa suara: BM'}
+          disabled={listening}
+          onPress={() => setLang(lang === 'ms' ? 'en' : 'ms')}
+          style={[s.lang, listening && { opacity: 0.4 }]}
+        >
+          <Text style={s.chipText}>{lang === 'en' ? 'EN' : 'BM'}</Text>
+        </Pressable>
         <TextInput
           style={s.input}
           value={text}
+          onFocus={hold}
           onChangeText={(v) => {
+            hold();
             if (listening) cancel();
-            if (!v) spoken.current = false;
+            if (!v) heard.current = '';
             setProblem(null);
             setText(v);
           }}
@@ -252,19 +418,10 @@ export default function AssistantScreen() {
           submitBehavior="submit"
           returnKeyType="send"
           maxLength={300}
-          placeholder="Taip atau cakap"
+          placeholder={lang === 'en' ? 'Or type here' : 'Atau taip di sini'}
           placeholderTextColor={colors.inkFaint}
           accessibilityLabel="Soalan anda"
         />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={listening ? 'Berhenti mendengar' : 'Cakap'}
-          onPress={talk}
-          disabled={busy}
-          style={[s.mic, listening && s.micOn, busy && { opacity: 0.4 }]}
-        >
-          <Icon name={listening ? 'stop' : 'mic'} size={22} color={listening ? colors.onGreen : colors.green} />
-        </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Hantar"
@@ -331,17 +488,21 @@ function AnswerCard({ a, speaking, onSpeak }: { a: Answer; speaking: boolean; on
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.paper },
   content: { padding: 20, paddingBottom: 28, gap: 18, width: '100%', maxWidth: 640, alignSelf: 'center' },
-  lede: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.inkFaint },
-  question: {
-    alignSelf: 'flex-end',
-    maxWidth: '85%',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: radius.lg,
-    borderBottomRightRadius: 6,
-    backgroundColor: colors.emerald,
+  stage: { alignItems: 'center', paddingTop: 8, paddingHorizontal: 20, gap: 6 },
+  says: { fontFamily: fonts.bodyMedium, fontSize: 16, lineHeight: 23, textAlign: 'center', color: colors.inkSoft },
+  caption: {
+    paddingTop: 12,
+    fontFamily: fonts.bodySemi,
+    fontSize: 25,
+    lineHeight: 34,
+    textAlign: 'center',
+    color: colors.ink,
   },
-  questionText: { fontFamily: fonts.bodyMedium, fontSize: 16, color: colors.ink },
+  hello: { fontFamily: fonts.bodyMedium, fontSize: 17, lineHeight: 25, textAlign: 'center', color: colors.ink },
+  you: { fontFamily: fonts.body, fontSize: 16, lineHeight: 23, textAlign: 'center', color: colors.inkFaint },
+  headerBtn: { minHeight: 44, minWidth: 44, justifyContent: 'center', paddingHorizontal: 12 },
+  strip: { gap: 8, paddingHorizontal: 16, paddingVertical: 8 },
+  lede: { fontFamily: fonts.body, fontSize: 13.5, lineHeight: 20, textAlign: 'center', color: colors.inkFaint },
   answer: {
     padding: 16,
     gap: 12,
@@ -399,26 +560,7 @@ const s = StyleSheet.create({
     fontSize: 16,
     color: colors.ink,
   },
-  mic: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.lineStrong,
-    backgroundColor: colors.surfaceRaised,
-  },
-  micOn: { backgroundColor: colors.danger, borderColor: colors.danger },
   hear: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, alignSelf: 'flex-start' },
-  status: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  statusText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 14.5, lineHeight: 21, color: colors.green },
   lang: {
     minWidth: 52,
     minHeight: 44,
@@ -429,8 +571,6 @@ const s = StyleSheet.create({
     borderColor: colors.lineStrong,
   },
   sheet: {
-    margin: 16,
-    marginBottom: 4,
     padding: 16,
     gap: 10,
     borderRadius: radius.lg,
