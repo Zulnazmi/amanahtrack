@@ -3,7 +3,6 @@
 import struct
 import zlib
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 
 from sqlalchemy import text
 
@@ -19,7 +18,6 @@ from app.models import (
     Fund,
     Institution,
     Role,
-    TxnStatus,
     User,
 )
 from app.services import alerts as alert_service
@@ -229,19 +227,15 @@ def run():
             description=desc,
         )
 
-    for amount in ("120.00", "85.50", "300.00"):
-        ledger.record_donation(
-            db,
-            institution_id=inst.id,
-            fund_id=funds["sadaqah"].id,
-            cash_fund_id=funds["cash"].id,
-            amount=amount,
-            description="Sensor insertion, Tabung pintu utama",
-            channel=Channel.DEVICE,
-            status=TxnStatus.PROVISIONAL,
-            device_id=device.id,
-            confidence=Decimal("0.85"),
-        )
+    ledger.close_count(
+        db,
+        institution_id=inst.id,
+        device_id=device.id,
+        counted_total="505.50",
+        cash_fund_id=funds["cash"].id,
+        witness_count=2,
+        witness_names="Saksi Satu\nSaksi Dua",
+    )
 
     seed_alerts(db, inst, device)
 

@@ -253,7 +253,11 @@ def test_count_records_witness_names(env):
         assert row.witness_names == "Ali Ahmad\nSiti" and row.witness_count == 2
     ref = c.get("/i/m/transactions", headers=t).json()[0]["reference"]
     r = c.post(f"/i/m/transactions/{ref}/reversal", headers=t, json={"reason": "undo count"})
-    assert r.status_code == 409
+    assert r.status_code == 201, r.text  # a mistyped count can be corrected
+    assert balance(c, t) == "50.00"  # but not by one person
+    r = decide(c, login(c, "admin"), r.json()["id"])
+    assert r.status_code == 200, r.text
+    assert balance(c, t) == "0.00"
 
 
 def test_purpose_codes_fit_the_column():

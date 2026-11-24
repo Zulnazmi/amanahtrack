@@ -16,16 +16,15 @@ see [LICENSE](LICENSE).
 | Double-entry ledger with balance invariant | working, tested |
 | Hash-chain sealing and tamper detection (ledger and alerts) | working, tested |
 | Signed device ingestion (HMAC-SHA256) and photo SHA-256 re-verification | working, tested |
-| Count reconciliation (provisional to confirmed, variance alert) | working, tested |
+| Manual counting with named witnesses | working, tested |
 | JWT auth, four roles, per-institution isolation, separation of duties | working, tested |
 | REST API | working |
 | Mobile app (alerts, photo evidence, verify, per-entry proof) | working |
 | Box client (Raspberry Pi 5) | runs in simulation mode and posts signed events |
 | Live sensor feed and push notifications | built, tested against simulated boxes |
 | Cloud deployment | guide in CLOUD_SETUP.md, not yet run in production |
-| Load-cell coin estimator | written, not tested on real hardware |
 
-94 tests pass (2 need a PostgreSQL test database). In the demo the box readings and alert photos are
+114 tests pass (2 need a PostgreSQL test database). In the demo the box readings and alert photos are
 **simulated**. The gaps are listed honestly because a demo that hides them
 falls apart under a judge's questions.
 
@@ -43,7 +42,7 @@ falls apart under a judge's questions.
   isolation (cross-institution access returns 404) and separation of duties
   (treasurers cannot clear alerts).
 
-Not measured, and not claimed: coin-estimator accuracy, performance figures,
+Not measured, and not claimed: performance figures
 or any formal penetration test.
 
 > **Secrets.** In production the server refuses to start without a strong
@@ -89,15 +88,14 @@ work from a physical device, which is why the env var exists.
    later seal fails with it. This is the property blockchain is usually
    imported for, done with a hash chain you can explain in one sentence.
 
-3. **Reconciliation.** The box estimates RM505.50, the committee counts
-   RM480. The variance is written into the ledger permanently rather than
-   quietly absorbed, with the witness count attached.
+3. **Witnessed counting.** The committee counts the cash and enters RM480
+   with the names of at least two witnesses. It enters the ledger as one sealed
+   entry that cannot be quietly changed.
 
 ## Design decisions worth knowing
 
 **Status is not sealed.** Amounts, funds, dates and purposes are covered by
-the hash. Status is not, because it legitimately moves (provisional becomes
-confirmed at counting time). Transitions are still provable: a confirmation is
+the hash. Status is not, because it legitimately moves. Transitions are still provable: a confirmation is
 evidenced by the sealed count session, a void by the sealed reversal.
 
 **Voided transactions stay in balances.** A mistake is corrected by posting
@@ -107,9 +105,8 @@ its mirror, not by hiding the original. The pair nets to zero on its own.
 raise a fund. Applying one convention to both is how a mosque ends up
 appearing to hold negative money, which is the first bug this project hit.
 
-**Device events are provisional by default.** A sensor has an opinion about
-what went into the box. It does not get to assert a balance. Only a witnessed
-human count promotes an estimate into the ledger proper.
+**A box never adds money.** Its sensors and camera guard the cash. Only people
+count it, in front of witnesses.
 
 ## What is missing before this touches a real mosque
 

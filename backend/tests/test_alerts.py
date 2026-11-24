@@ -16,6 +16,7 @@ from app.models import (
     AccountNature,
     Alert,
     Base,
+    Channel,
     Device,
     Fund,
     Institution,
@@ -23,6 +24,7 @@ from app.models import (
     User,
 )
 from app.services import alerts as alert_service
+from app.models import TxnStatus
 from app.services import ledger
 
 # 1x1 PNG
@@ -289,29 +291,45 @@ def test_photo_requires_login(env):
     assert c.get(f"/i/masjid-a/alerts/{aid}/photo").status_code == 401
 
 
-def test_large_count_variance_raises_an_alert(env):
-    c, Session, _ = env
-    h = login(c, "t@a.my")
-    r = c.post(
-        "/i/masjid-a/counts",
-        json={"device_serial": "BOX-T", "counted_total": "50.00", "witness_count": 2},
-        headers=h,
-    )
-    assert r.status_code == 201 and r.json()["alert_raised"] is True
-    alerts = c.get("/i/masjid-a/alerts", headers=login(c, "c@a.my")).json()
-    assert alerts[0]["kind"] == "count_variance"
-    assert alerts[0]["related_reference"]
-    assert alerts[0]["has_photo"] is False
+def _old_estimate(Session, ids):
+    with Session() as db:
+        funds = {f.code: f.id for f in db.query(Fund).filter_by(institution_id=ids["inst"])}
+        box = db.query(Device).filter_by(serial="BOX-T").one()
+        ledger.record_donation(
+            db, institution_id=ids["inst"], fund_id=funds["sadaqah"], cash_fund_id=funds["cash"],
+            amount="5.00", description="Old estimate", channel=Channel.DEVICE,
+            status=TxnStatus.PROVISIONAL, device_id=box.id,
+        )
+        db.commit()
 
 
-def test_small_variance_raises_no_alert(env):
+def test_a_manual_count_raises_no_alert(env):
+    """With no estimate there is nothing for the count to disagree with."""
     c, _, _ = env
     r = c.post(
         "/i/masjid-a/counts",
-        json={"device_serial": "BOX-T", "counted_total": "5.00"},
+        json={"device_serial": "BOX-T", "counted_total": "5000.00", "witness_count": 2},
         headers=login(c, "t@a.my"),
     )
-    assert r.json()["alert_raised"] is False
+    assert r.status_code == 201 and r.json()["alert_raised"] is False
+    assert r.json()["variance"] == "0.00" and r.json()["flagged"] is False
+    h = login(c, "c@a.my")
+    assert c.get("/i/masjid-a/alerts", headers=h).json() == []
+    row = c.get("/i/masjid-a/transactions", headers=h).json()[0]
+    assert row["description"].startswith("Witnessed count") and row["amount"] == "5000.00"
+
+
+def test_a_count_against_an_old_estimate_still_raises_an_alert(env):
+    c, Session, ids = env
+    _old_estimate(Session, ids)
+    r = c.post(
+        "/i/masjid-a/counts",
+        json={"device_serial": "BOX-T", "counted_total": "50.00", "witness_count": 2},
+        headers=login(c, "t@a.my"),
+    )
+    assert r.status_code == 201 and r.json()["alert_raised"] is True
+    alerts = c.get("/i/masjid-a/alerts", headers=login(c, "c@a.my")).json()
+    assert alerts[0]["kind"] == "count_variance" and alerts[0]["related_reference"]
 
 
 def test_transaction_proof_and_tamper(env):

@@ -17,12 +17,8 @@ import { colors, radius, ringgit, space, type } from '../src/theme';
 /**
  * Counting day.
  *
- * The box has an estimate; the committee counts the actual cash. The gap
- * between the two is written down permanently instead of being quietly
- * absorbed. Framing matters here: a clean count is evidence that the people
- * who handled the money handled it honestly, and the copy says so. Treating
- * every variance as an accusation is how you get a committee that stops
- * using the app.
+ * Only people count money. The box guards the cash; two or more witnesses
+ * count it, and what they counted goes into the ledger.
  */
 
 export default function CountScreen() {
@@ -50,12 +46,7 @@ export default function CountScreen() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  const cash = funds.find((f) => f.code === 'cash');
-  const estimate = cash ? parseFloat(cash.provisional) : 0;
   const money = parseMoney(counted);
-  // The estimate covers every box, so it only means something with one.
-  const comparable = boxes.length === 1 && box === boxes[0].serial;
-  const preview = money && comparable ? Number(money) - estimate : null;
 
   async function submit() {
     setError(null);
@@ -96,35 +87,19 @@ export default function CountScreen() {
   }
 
   if (result) {
-    const variance = parseFloat(result.variance);
-    const clean = Math.abs(variance) < 0.01;
     return (
       <ScrollView style={c.screen} contentContainerStyle={c.content}>
         <Text style={c.title}>Kiraan direkod</Text>
 
-        <View style={c.resultRow}>
-          <Text style={c.resultLabel}>Anggaran tabung</Text>
-          <Text style={c.resultValue}>{ringgit(result.estimated)}</Text>
-        </View>
-        <View style={c.resultRow}>
+        <View style={[c.resultRow, c.resultRowLast]}>
           <Text style={c.resultLabel}>Dikira oleh AJK</Text>
           <Text style={c.resultValue}>{ringgit(result.counted)}</Text>
         </View>
-        <View style={[c.resultRow, c.resultRowLast]}>
-          <Text style={c.resultLabel}>Perbezaan</Text>
-          <Text style={[c.resultValue, !clean && c.varianceValue]}>
-            {ringgit(result.variance)}
-          </Text>
-        </View>
 
-        <View style={clean ? c.cleanCard : c.flagCard}>
-          <Text style={clean ? c.cleanTitle : c.flagTitle}>
-            {clean ? 'Sepadan sepenuhnya' : 'Perbezaan dicatat'}
-          </Text>
-          <Text style={clean ? c.cleanBody : c.flagBody}>
-            {clean
-              ? 'Jumlah dikira sepadan dengan anggaran tabung. Rekod ini menjadi bukti bahawa kutipan diuruskan dengan amanah.'
-              : 'Perbezaan disimpan kekal dalam lejar bersama bilangan saksi. Sensor memberi anggaran, bukan jumlah tepat, jadi perbezaan kecil adalah biasa.'}
+        <View style={c.cleanCard}>
+          <Text style={c.cleanTitle}>Disimpan dalam lejar</Text>
+          <Text style={c.cleanBody}>
+            Jumlah ini direkod bersama nama saksi dan dimeterai dalam lejar.
           </Text>
         </View>
 
@@ -157,14 +132,6 @@ export default function CountScreen() {
         </>
       )}
 
-      {comparable && <View style={c.estimateCard}>
-        <Text style={c.estimateLabel}>Anggaran daripada sensor</Text>
-        <Text style={c.estimateValue}>{ringgit(estimate)}</Text>
-        <Text style={c.estimateNote}>
-          Anggaran berdasarkan berat dan bilangan kemasukan. Bukan jumlah muktamad.
-        </Text>
-      </View>}
-
       <Text style={c.label}>Jumlah dikira (RM)</Text>
       <TextInput
         style={c.input}
@@ -174,13 +141,6 @@ export default function CountScreen() {
         placeholder="0.00"
         placeholderTextColor={colors.inkFaint}
       />
-
-      {preview !== null && (
-        <Text style={c.preview}>
-          Perbezaan: {ringgit(preview)}
-          {Math.abs(preview) >= 20 ? ' — akan ditanda untuk semakan' : ''}
-        </Text>
-      )}
 
       <Text style={c.label}>{box === '' ? 'Dana' : 'Dana (kosongkan untuk ikut tetapan tabung)'}</Text>
       <Choices
@@ -232,15 +192,6 @@ const c = StyleSheet.create({
   title: { ...type.title, color: colors.ink },
   lede: { ...type.small, color: colors.inkFaint, marginTop: space.sm, lineHeight: 20 },
 
-  estimateCard: {
-    marginTop: space.lg,
-    padding: space.lg,
-    backgroundColor: colors.surfaceSunk,
-    borderRadius: radius.md,
-  },
-  estimateLabel: { ...type.small, color: colors.inkSoft },
-  estimateValue: { ...type.title, color: colors.ink, marginTop: space.xs },
-  estimateNote: { ...type.small, color: colors.inkFaint, marginTop: space.sm, lineHeight: 18 },
 
   label: { ...type.small, color: colors.inkSoft, marginTop: space.lg, marginBottom: space.sm, fontWeight: '600' },
   input: {
@@ -275,12 +226,8 @@ const c = StyleSheet.create({
   resultRowLast: { borderBottomWidth: 0 },
   resultLabel: { ...type.body, color: colors.inkSoft },
   resultValue: { ...type.body, color: colors.ink, fontWeight: '600' },
-  varianceValue: { color: colors.warn },
 
   cleanCard: { marginTop: space.lg, padding: space.lg, backgroundColor: colors.greenSoft, borderRadius: radius.md },
   cleanTitle: { ...type.heading, color: colors.green },
   cleanBody: { ...type.small, color: colors.green, marginTop: space.sm, lineHeight: 20 },
-  flagCard: { marginTop: space.lg, padding: space.lg, backgroundColor: colors.warnSoft, borderRadius: radius.md },
-  flagTitle: { ...type.heading, color: colors.warn },
-  flagBody: { ...type.small, color: colors.warn, marginTop: space.sm, lineHeight: 20 },
 });

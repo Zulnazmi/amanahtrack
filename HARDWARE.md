@@ -1,5 +1,11 @@
 # HARDWARE.md: turning your donation box into an input channel
 
+> **Not used any more.** AmanahTrack no longer counts money with a sensor. Money
+> is counted by people, with witnesses, and the server ignores coin estimates.
+> The load cell, `coins.json` and coin weighing below are kept only as history.
+> The anti-theft box (door, vibration, camera) uses `device/sensor_client.py`,
+> which still needs `device/box_client.py` beside it for signing and sending.
+
 What this gives you: every time coins drop into the tray, the Pi weighs the change,
 works out the most likely coin combination, and sends a **provisional** estimate to
 AmanahTrack. The app shows it as "estimated, not yet counted". When the treasurer and

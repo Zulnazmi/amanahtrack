@@ -461,7 +461,10 @@ def close_count(
     closed_by: str | None = None,
     target_fund_id: str | None = None,
 ) -> CountSession:
-    """Reconcile provisional device entries against a physical count.
+    """Record cash counted by people in front of witnesses.
+
+    Without estimates there is nothing to disagree with, so the count simply
+    is the collection. Estimates left by older box software are still settled:
 
     The box says one number, the humans counting say another. The difference
     is written down permanently rather than quietly absorbed, which is the
@@ -491,9 +494,10 @@ def close_count(
     for txn in pending:
         txn.status = TxnStatus.CONFIRMED
 
-    variance = money(counted - estimated)
+    to_post = money(counted - estimated)
+    variance = to_post if pending else Decimal("0.00")
 
-    if variance != Decimal("0"):
+    if to_post != Decimal("0"):
         # Whose money is it? What the caller said, then what the sensor
         # entries said, then what the box is set up to collect for. A box that
         # was offline, or held only notes, has no sensor entries at all.
@@ -509,18 +513,20 @@ def close_count(
         if target_fund is None or target_fund == cash_fund_id:
             raise NoTargetFund("Choose which fund this counted cash belongs to")
 
-        side_cash = EntrySide.DEBIT if variance > 0 else EntrySide.CREDIT
-        side_fund = EntrySide.CREDIT if variance > 0 else EntrySide.DEBIT
+        side_cash = EntrySide.DEBIT if to_post > 0 else EntrySide.CREDIT
+        side_fund = EntrySide.CREDIT if to_post > 0 else EntrySide.DEBIT
 
         post(
             db,
             institution_id=institution_id,
             description=(
                 f"Count adjustment: counted {counted} against estimate {estimated}"
+                if pending
+                else f"Witnessed count, {witness_count} witness(es)"
             ),
             legs=[
-                Leg(fund_id=cash_fund_id, side=side_cash, amount=abs(variance)),
-                Leg(fund_id=target_fund, side=side_fund, amount=abs(variance)),
+                Leg(fund_id=cash_fund_id, side=side_cash, amount=abs(to_post)),
+                Leg(fund_id=target_fund, side=side_fund, amount=abs(to_post)),
             ],
             channel=Channel.DASHBOARD,
             recorded_by=closed_by,

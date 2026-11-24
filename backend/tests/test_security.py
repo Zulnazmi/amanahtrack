@@ -107,24 +107,31 @@ def count(Session, model):
 
 def test_a_repeated_event_is_recorded_once(env):
     c, Session = env
-    assert coin(c, event_id="a" * 32).json()["recorded"] is True
+    assert "duplicate" not in coin(c, event_id="a" * 32).json()
     again = coin(c, event_id="a" * 32)
     assert again.status_code == 202 and again.json()["duplicate"] is True
-    assert count(Session, Transaction) == 1
+    assert count(Session, DeviceMessage) == 1
+
+
+def test_a_box_can_never_add_money(env):
+    c, Session = env
+    r = coin(c)
+    assert r.status_code == 202 and r.json()["recorded"] is False
+    assert count(Session, Transaction) == 0
 
 
 def test_two_real_coins_are_two_events(env):
     c, Session = env
     coin(c)
     coin(c)
-    assert count(Session, Transaction) == 2
+    assert count(Session, DeviceMessage) == 2
 
 
 def test_an_old_capture_is_refused(env):
     c, Session = env
     r = coin(c, timestamp=int(time.time()) - 3600)
     assert r.status_code == 401 and r.json()["detail"]["code"] == "clock_skew"
-    assert count(Session, Transaction) == 0
+    assert count(Session, DeviceMessage) == 0
 
 
 def test_changing_the_body_or_the_path_breaks_the_signature(env):
@@ -269,7 +276,7 @@ def test_the_real_box_client_is_accepted_and_retries_safely(env, monkeypatch, tm
     event = {"event_type": "insertion", "estimated_amount": "1.00", "confidence": "0.900"}
     assert bc.deliver(event) is False  # recorded, but the box never heard back
     assert bc.flush_queue() == 0  # sent again
-    assert count(Session, Transaction) == 1
+    assert count(Session, DeviceMessage) == 1
 
 
 def test_the_box_keeps_events_when_its_clock_or_key_is_wrong(monkeypatch, tmp_path):

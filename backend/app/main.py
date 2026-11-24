@@ -204,9 +204,6 @@ class SpendCheckIn(BaseModel):
 class DeviceEventIn(BaseModel):
     serial: str
     event_type: str = "insertion"
-    estimated_amount: Decimal | None = None
-    confidence: Decimal | None = None
-    occurred_at: datetime | None = None
 
 
 class DeviceAlertIn(BaseModel):
@@ -623,44 +620,17 @@ def ingest_device_event(
     envelope: device_auth.Envelope = Depends(device_auth.envelope),
     db: Session = Depends(get_db),
 ):
-    """Signed events from a sensor box.
+    """Signed events from older box software that weighed coins.
 
-    Lands as PROVISIONAL. The box has an opinion about what went in; it does
-    not get to assert a balance. Only a witnessed count promotes it.
+    Money is only ever counted by people, so nothing is added to the ledger.
+    The event is still acknowledged, or an old box would resend it for ever.
     """
     device = device_auth.authenticate(db, envelope, body.serial)
     if device is None:
         return {"accepted": True, "recorded": False, "duplicate": True}
-
     device.last_seen_at = datetime.now(timezone.utc)
-
-    if body.event_type != "insertion" or body.estimated_amount is None:
-        db.commit()
-        return {"accepted": True, "recorded": False, "note": body.event_type}
-
-    if device.default_fund_id is None:
-        raise HTTPException(409, "Device has no default fund configured")
-
-    try:
-        txn = ledger.record_donation(
-            db,
-            institution_id=device.institution_id,
-            fund_id=device.default_fund_id,
-            cash_fund_id=get_fund(
-                db, db.get(Institution, device.institution_id), "cash"
-            ).id,
-            amount=body.estimated_amount,
-            description=f"Sensor insertion, {device.label}",
-            channel=Channel.DEVICE,
-            status=TxnStatus.PROVISIONAL,
-            device_id=device.id,
-            confidence=body.confidence,
-        )
-    except LedgerError as exc:
-        db.rollback()
-        raise HTTPException(422, str(exc))
     db.commit()
-    return {"accepted": True, "recorded": True, "reference": txn.reference}
+    return {"accepted": True, "recorded": False, "note": "counted_by_people"}
 
 
 @app.post("/devices/telemetry", status_code=202)

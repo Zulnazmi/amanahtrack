@@ -18,7 +18,7 @@ import { colors, fonts, radius, ringgit, space } from '../src/theme';
 import { BottomBar } from '../src/ui/BottomBar';
 import { Icon, IconName } from '../src/ui/Icon';
 import { LogoMark } from '../src/ui/Logo';
-import { FadeUp, GrowX, PressScale, Pulse, Skeleton } from '../src/ui/motion';
+import { FadeUp, GrowX, PressScale, Skeleton } from '../src/ui/motion';
 
 type Verification = { intact: boolean; checked: number; summary: string };
 
@@ -129,7 +129,6 @@ export default function HomeScreen() {
   const locked = rest.filter((f) => !f.spendable);
 
   const total = rest.reduce((sum, f) => sum + parseFloat(f.balance), 0);
-  const pending = cash ? parseFloat(cash.provisional) : 0;
   const sealColor =
     verification && !verification.intact ? colors.danger : error ? colors.brass : colors.green;
   const barWidth = width - 40 - 36;
@@ -267,14 +266,6 @@ export default function HomeScreen() {
                       ? `${verification.checked} ${verification.checked === 1 ? 'entry' : 'entries'} verified`
                       : ''}
                 </Text>
-                {pending > 0 && (
-                  <View style={s.pendingRow}>
-                    <Pulse>
-                      <View style={s.pendingDot} />
-                    </Pulse>
-                    <Text style={s.pendingText}>{ringgit(pending)} pending count</Text>
-                  </View>
-                )}
               </View>
             </FadeUp>
 
@@ -294,25 +285,6 @@ export default function HomeScreen() {
                 <Action icon="lock" label="Kata laluan" href="/password" />
               </View>
             </FadeUp>
-
-            {pending > 0 && (
-              <FadeUp delay={220}>
-                <View style={s.boxCard}>
-                  <View style={s.boxIcon}>
-                    <Icon name="box" size={22} color={colors.brass} strokeWidth={1.7} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.boxTitle}>Donation box</Text>
-                    <Text style={s.boxSub}>Estimates waiting for a witnessed count</Text>
-                  </View>
-                  {writable && (
-                    <PressScale onPress={() => router.push('/count')} style={s.countBtn}>
-                      <Text style={s.countBtnText}>Count</Text>
-                    </PressScale>
-                  )}
-                </View>
-              </FadeUp>
-            )}
 
             <FadeUp delay={320} style={s.fundsHead}>
               <Text style={s.fundsTitle}>Funds</Text>
@@ -373,7 +345,6 @@ function Group({
     <View style={[!first && s.groupDivider]}>
       <Text style={s.groupLabel}>{label}</Text>
       {funds.map((f) => {
-        const provisional = parseFloat(f.provisional);
         const isLocked = !f.spendable;
         return (
           <PressScale
@@ -396,9 +367,6 @@ function Group({
                   maximumFractionDigits: 2,
                 })}
               </Text>
-              {provisional > 0 && (
-                <Text style={s.rowProvisional}>+ {provisional.toFixed(2)} provisional</Text>
-              )}
             </View>
           </PressScale>
         );
@@ -538,40 +506,7 @@ const s = StyleSheet.create({
     marginTop: 12,
   },
   heroFootText: { fontFamily: fonts.body, fontSize: 12, color: '#A9D8C5' },
-  pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  pendingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.brass },
-  pendingText: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.brass },
 
-  boxCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    paddingLeft: 14,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.line,
-  },
-  boxIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.brassSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  boxTitle: { fontFamily: fonts.bodySemi, fontSize: 14, color: colors.ink },
-  boxSub: { fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint, marginTop: 2 },
-  countBtn: {
-    minWidth: 76,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: colors.green,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  countBtnText: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.onGreen },
 
   fundsHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
   fundsTitle: { fontFamily: fonts.display, fontSize: 16, color: colors.ink },
@@ -599,7 +534,6 @@ const s = StyleSheet.create({
   rowName: { fontFamily: fonts.bodySemi, fontSize: 14.5, color: colors.ink },
   rowRule: { fontFamily: fonts.body, fontSize: 11.5, color: colors.inkFaint, marginTop: 1 },
   rowAmount: { fontFamily: fonts.display, fontSize: 14.5, color: colors.ink },
-  rowProvisional: { fontFamily: fonts.body, fontSize: 11, color: colors.brass, marginTop: 1 },
 
   readOnly: {
     fontFamily: fonts.body,
