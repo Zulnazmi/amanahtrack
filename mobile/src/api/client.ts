@@ -492,17 +492,21 @@ export const api = {
 
   devices: () => request<DeviceStatus[]>(`/i/${SLUG}/devices`),
 
-  registerPushToken: (token: string) =>
-    fetch(`${BASE_URL}/i/${SLUG}/push-token`, {
+  registerPushToken: (token: string, lang: string) =>
+    request<void>(`/i/${SLUG}/push-token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ token, platform: 'android' }),
+      body: JSON.stringify({ token, platform: 'android', lang }),
     }),
-  removePushToken: (token: string) =>
-    fetch(`${BASE_URL}/i/${SLUG}/push-token?token=${encodeURIComponent(token)}`, {
+  // Not through request(): a sign out that is refused must not sign out again.
+  removePushToken: async (token: string) => {
+    const res = await fetch(`${BASE_URL}/i/${SLUG}/push-token?token=${encodeURIComponent(token)}`, {
       method: 'DELETE',
       headers: authHeaders(),
-    }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+  },
+  testPush: () =>
+    request<{ ok: boolean; phones: number; problem: string | null }>(`/i/${SLUG}/push-test`, { method: 'POST' }),
 
   liveEvents: (limit = 40) => request<LiveEvent[]>(`/i/${SLUG}/live/events?limit=${limit}`),
 

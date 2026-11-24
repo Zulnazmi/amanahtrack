@@ -7,6 +7,7 @@ import { roleName } from '../src/roles';
 import { useSession } from '../src/session';
 import { brand } from '../src/theme';
 import { Button, Choices, form } from '../src/ui/Form';
+import { PushSettings } from '../src/ui/PushSettings';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -31,6 +32,8 @@ export default function SettingsScreen() {
           { value: 'en', label: 'English' },
         ]}
       />
+
+      <PushSettings />
 
       <Text style={form.strong}>{t('Akaun', 'Account')}</Text>
       <Button label={t('Tukar kata laluan', 'Change password')} quiet onPress={() => router.push('/password')} />

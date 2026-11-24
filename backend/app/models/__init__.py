@@ -155,6 +155,7 @@ class PushToken(Base):
     institution_id: Mapped[str] = mapped_column(ForeignKey("institutions.id"))
     token: Mapped[str] = mapped_column(String(200), unique=True)
     platform: Mapped[str] = mapped_column(String(20), default="android")
+    lang: Mapped[str] = mapped_column(String(2), default="ms", server_default="ms")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

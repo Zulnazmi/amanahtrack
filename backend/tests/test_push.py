@@ -5,6 +5,7 @@ import asyncio
 from sqlalchemy import select
 
 from app.models import PushToken, User
+from app import main
 from app.services import push
 from test_live import env, hdr  # noqa: F401  (fixtures and helpers)
 
@@ -87,6 +88,9 @@ def run_listener(Session, inst_id, msg):
 
 
 def setup_function():
+    push.CLIENT = FakeClient
+    push.RECEIPT_WAIT_S = 0
+    main._push_tests.clear()
     FakeClient.sent = []
     FakeClient.reply = None
     push._last_sent.clear()
@@ -138,3 +142,57 @@ def test_dead_tokens_are_removed(env):
     run_listener(Session, institution_id(Session), message())
     with Session() as db:
         assert db.scalars(select(PushToken)).all() == []
+
+
+def test_alerts_use_each_phones_language(env):
+    c, Session = env
+    reg(c, TOKEN_A)
+    r = c.post("/i/masjid-a/push-token", json={"token": TOKEN_B, "lang": "en"}, headers=hdr(c))
+    assert r.status_code == 204
+    run_listener(Session, institution_id(Session), message())
+    titles = {m["to"]: m["title"] for m in FakeClient.sent[0]}
+    assert titles == {TOKEN_A: "Pintu tabung dibuka", TOKEN_B: "Box door opened"}
+
+
+def test_changing_the_password_stops_every_phone(env):
+    c, Session = env
+    reg(c, TOKEN_A)
+    r = c.post("/auth/change-password", headers=hdr(c),
+               json={"current": "pw", "new": "a-new-long-password-1"})
+    assert r.status_code == 204, r.text
+    with Session() as db:
+        assert db.scalars(select(PushToken)).all() == []
+
+
+def test_the_test_button_reports_what_google_said(env):
+    c, _ = env
+    h = hdr(c)
+    none = c.post("/i/masjid-a/push-test", headers=h).json()
+    assert none["problem"] == "no_phone"
+    reg(c, TOKEN_A)
+    assert c.post("/i/masjid-a/push-test", headers=h).json() == {
+        "ok": True, "phones": 1, "problem": None}
+    assert [m["to"] for m in FakeClient.sent[0]] == [TOKEN_A]
+    assert c.post("/i/masjid-a/push-test", headers=h).status_code == 429
+    main._push_tests.clear()
+    FakeClient.reply = {"data": [{"status": "error", "details": {"error": "InvalidCredentials"}}]}
+    assert c.post("/i/masjid-a/push-test", headers=h).json()["problem"] == "InvalidCredentials"
+
+
+def test_a_failed_receipt_is_noticed(env):
+    _, Session = env
+
+    class Late(FakeClient):
+        async def post(self, url, json, headers):
+            class R:
+                status_code = 200
+
+                def json(_self):
+                    if url == push.EXPO_RECEIPTS_URL:
+                        return {"data": {"t1": {"status": "error", "details": {"error": "MismatchSenderId"}}}}
+                    return {"data": [{"status": "ok", "id": "t1"}]}
+
+            return R()
+
+    out = asyncio.run(push.deliver(Session, [{"to": TOKEN_A}], Late, wait=0))
+    assert out == ["MismatchSenderId"]

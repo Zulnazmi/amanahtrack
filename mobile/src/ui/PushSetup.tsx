@@ -4,6 +4,6 @@ import { useSession } from '../session';
 /** Renders nothing. Sets up push notifications for the signed in user. */
 export function PushSetup() {
   const { session } = useSession();
-  usePushSetup(!!session && !session.must_change_password);
+  usePushSetup(session && !session.must_change_password ? session.token : null);
   return null;
 }

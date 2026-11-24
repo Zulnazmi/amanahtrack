@@ -92,7 +92,7 @@ export const brand = {
   tagline: 'DONATION INTEGRITY PLATFORM',
   copyright: '© 2026 AmanahTrack. All rights reserved.',
   trademark: 'AmanahTrack and the arch mark are trademarks of AmanahTrack.',
-  version: 'v1.0',
+  version: 'v0.3.0',
 } as const;
 
 export function ringgit(value: string | number): string {

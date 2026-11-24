@@ -9,7 +9,7 @@ from app.core import throttle
 from app.core.fiqh import PurposeCode
 from app.main import app, get_db
 from app.models import Base, CountSession, Institution, PushToken, Role, Transaction, User
-from app.services import ledger
+from app.services import ledger, push
 from create_mosque import create
 
 PW = "a-long-password"
@@ -292,3 +292,53 @@ def test_proof_says_what_can_be_done(env):
     p = c.get(f"/i/m/transactions/{ref}/proof", headers=t).json()
     assert p["reversible"] and p["has_receipt"] and p["status"] == "confirmed"
     assert c.post("/auth/login", data={"username": "admin@m.my", "password": PW}).json()["institution"] == "m"
+
+
+def test_the_right_people_are_told(env, monkeypatch):
+    c, Session = env
+    sent = []
+
+    async def start(_, messages):
+        sent.append(messages)
+
+    monkeypatch.setattr(push, "start", start)
+    hs = {w: login(c, w) for w in ("admin", "treasurer", "committee", "auditor")}
+    other = login(c, "admin", mosque="other")
+    for who, h in hs.items():
+        c.post("/i/m/push-token", headers=h, json={"token": f"phone-of-{who}"})
+    c.post("/i/other/push-token", headers=other, json={"token": "phone-elsewhere"})
+    t, k, a = hs["treasurer"], hs["committee"], hs["admin"]
+
+    def told():
+        return {m["to"] for batch in sent for m in batch}
+
+    ref = give(c, t).json()["reference"]
+    assert sent == []
+
+    one = SPEND | {"request_id": "ask-12345", "description": "Nama rahsia"}
+    aid = c.post("/i/m/approvals", headers=t, json=one).json()["id"]
+    assert told() == {"phone-of-admin", "phone-of-committee"}
+    text = str(sent)
+    assert "RM 40.00" in text and "rahsia" not in text and "Treasurer" not in text
+    assert sent[0][0]["data"] == {"screen": "approvals"}
+    sent.clear()
+    c.post("/i/m/approvals", headers=t, json=one)  # same request again
+    assert told() == set()
+    c.post("/i/m/approvals", headers=t, json=SPEND | {"purpose": "nothing"})
+    assert told() == set()
+
+    assert decide(c, t, aid).status_code == 403  # refused, so nobody is told
+    assert told() == set()
+    decide(c, k, aid)
+    assert told() == {"phone-of-treasurer"} and sent[0][0]["title"] == "Permintaan anda diluluskan"
+    sent.clear()
+
+    aid = c.post("/i/m/approvals", headers=a, json=SPEND | {"amount": "1"}).json()["id"]
+    assert told() == {"phone-of-committee"}  # not the admin who asked
+    sent.clear()
+    c.post(f"/i/m/approvals/{aid}/cancel", headers=a)
+    assert told() == set()
+
+    c.post(f"/i/m/transactions/{ref}/reversal", headers=t, json={"reason": "Wrong fund"})
+    assert told() == {"phone-of-admin", "phone-of-committee"}
+    assert "Pembetulan" in str(sent)

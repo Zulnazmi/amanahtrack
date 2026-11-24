@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -27,7 +27,7 @@ from app.models import (
     Transaction,
     User,
 )
-from app.services import approvals
+from app.services import approvals, push
 
 router = APIRouter()
 
@@ -134,6 +134,10 @@ def _approval_out(db: Session, a: Approval, user: User) -> dict:
     }
 
 
+def _tell(background: BackgroundTasks, db: Session, row: Approval) -> None:
+    background.add_task(push.start, core.SessionLocal, push.for_approval(db, row))
+
+
 @router.get("/i/{slug}/approvals")
 def list_approvals(
     slug: str,
@@ -153,11 +157,18 @@ def list_approvals(
 def request_spend(
     slug: str,
     body: SpendRequestIn,
+    background: BackgroundTasks,
     db: Session = Depends(core.get_db),
     user: User = Depends(core.treasurer_or_admin),
 ):
     inst = _inst(db, slug, user)
     fund = core.get_fund(db, inst, body.fund_code)
+    # A phone that lost the answer asks again. Nobody should be told twice.
+    sent_before = body.request_id and db.scalars(
+        select(Approval.id).where(
+            Approval.institution_id == inst.id, Approval.request_id == body.request_id
+        )
+    ).first()
     row = _guard(
         db,
         lambda: approvals.request_spend(
@@ -165,6 +176,8 @@ def request_spend(
             description=body.description, user=user, request_id=body.request_id,
         ),
     )
+    if not sent_before:
+        _tell(background, db, row)
     return _approval_out(db, row, user)
 
 
@@ -173,6 +186,7 @@ def request_reversal(
     slug: str,
     reference: str,
     body: ReversalIn,
+    background: BackgroundTasks,
     db: Session = Depends(core.get_db),
     user: User = Depends(core.treasurer_or_admin),
 ):
@@ -181,10 +195,11 @@ def request_reversal(
     row = _guard(
         db, lambda: approvals.request_reversal(db, txn=txn, reason=body.reason, user=user)
     )
+    _tell(background, db, row)
     return _approval_out(db, row, user)
 
 
-def _decide(db, slug, approval_id, user, action, note):
+def _decide(db, background, slug, approval_id, user, action, note):
     inst = _inst(db, slug, user)
     row = db.get(Approval, approval_id)
     if row is None or row.institution_id != inst.id:
@@ -196,6 +211,7 @@ def _decide(db, slug, approval_id, user, action, note):
             db, row, user=user, action=action, note=note, cash_fund_id=cash.id
         ),
     )
+    _tell(background, db, row)
     return _approval_out(db, row, user)
 
 
@@ -204,20 +220,22 @@ def decide(
     slug: str,
     approval_id: str,
     body: DecisionIn,
+    background: BackgroundTasks,
     db: Session = Depends(core.get_db),
     user: User = Depends(approver),
 ):
-    return _decide(db, slug, approval_id, user, body.action, body.note)
+    return _decide(db, background, slug, approval_id, user, body.action, body.note)
 
 
 @router.post("/i/{slug}/approvals/{approval_id}/cancel")
 def cancel(
     slug: str,
     approval_id: str,
+    background: BackgroundTasks,
     db: Session = Depends(core.get_db),
     user: User = Depends(core.current_user),
 ):
-    return _decide(db, slug, approval_id, user, "cancel", None)
+    return _decide(db, background, slug, approval_id, user, "cancel", None)
 
 
 # ---------------------------------------------------------------- receipts

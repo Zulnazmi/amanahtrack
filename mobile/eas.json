@@ -12,6 +12,7 @@
       }
     },
     "preview": {
+      "environment": "preview",
       "distribution": "internal",
       "android": {
         "buildType": "apk"
@@ -21,6 +22,7 @@
       }
     },
     "production": {
+      "environment": "production",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://amanahtrack.onrender.com"
       },

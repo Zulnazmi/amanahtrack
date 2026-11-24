@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Literal
 
 from fastapi import (
+    BackgroundTasks,
     Depends,
     FastAPI,
     Header,
@@ -369,6 +372,7 @@ def change_password(
     user.password_hash = auth.hash_password(body.new)
     user.must_change_password = False
     user.token_version += 1  # every phone signs in again
+    db.execute(delete(PushToken).where(PushToken.user_id == user.id))
     db.commit()
 
 
@@ -793,6 +797,7 @@ async def ingest_device_alert(
 class PushTokenIn(BaseModel):
     token: str = Field(min_length=10, max_length=200)
     platform: str = Field(default="android", max_length=20)
+    lang: Literal["ms", "en"] = "ms"
 
 
 @app.post("/i/{slug}/push-token", status_code=204)
@@ -813,10 +818,12 @@ def register_push_token(
                 institution_id=inst.id,
                 token=body.token,
                 platform=body.platform,
+                lang=body.lang,
             )
         )
     else:  # same phone, maybe a different person signed in
         row.user_id, row.institution_id, row.platform = user.id, inst.id, body.platform
+        row.lang = body.lang
     db.commit()
 
 
@@ -836,10 +843,45 @@ def remove_push_token(
     db.commit()
 
 
+@app.post("/i/{slug}/push-test")
+async def test_push(
+    slug: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(any_member),
+):
+    """Send a test to the caller's own phones and say whether it was accepted."""
+    inst = get_institution(db, slug)
+    assert_same_institution(user, inst)
+    to = push_service.phones(db, inst.id, User.id == user.id)
+    if not to:
+        return {"ok": False, "phones": 0, "problem": "no_phone"}
+    now = time.monotonic()
+    if now - _push_tests.get(user.id, float("-inf")) < 15:
+        raise HTTPException(429, detail={
+            "code": "wait",
+            "message_en": "Wait a moment before testing again.",
+            "message_ms": "Tunggu sebentar sebelum menguji lagi.",
+        })
+    _push_tests[user.id] = now
+    try:
+        errors = await push_service.deliver(
+            SessionLocal,
+            [{"to": token, **push_service.test_message(lang)} for token, lang in to],
+            wait=4,
+        )
+    except Exception:  # Expo unreachable
+        errors = ["Unreachable"]
+    return {"ok": not errors, "phones": len(to), "problem": errors[0] if errors else None}
+
+
+_push_tests: dict[str, float] = {}
+
+
 @app.post("/i/{slug}/counts", status_code=201)
 def close_count(
     slug: str,
     body: CountIn,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(treasurer_or_admin),
 ):
@@ -923,6 +965,8 @@ def close_count(
             adjustment_ref=adjustment.reference if adjustment else None,
         )
     db.commit()
+    if raised is not None:
+        background.add_task(push_service.start, SessionLocal, push_service.for_alert(db, raised))
     return _count_out(session_row, raised is not None)
 
 
