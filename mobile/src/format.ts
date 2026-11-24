@@ -32,6 +32,20 @@ export function fullTime(iso: string): string {
   });
 }
 
+/** "Hari ini", "Semalam", or the date, as it is in Malaysia. */
+export function dayName(iso: string): string {
+  const day = (ms: number) => new Date(ms + 8 * 3600000).toISOString().slice(0, 10);
+  const then = parse(iso).getTime();
+  if (day(then) === day(Date.now())) return say('Hari ini', 'Today');
+  if (day(then) === day(Date.now() - 86400000)) return say('Semalam', 'Yesterday');
+  const [y, m, d] = day(then).split('-').map(Number);
+  const months = say(
+    'Januari Februari Mac April Mei Jun Julai Ogos September Oktober November Disember',
+    'January February March April May June July August September October November December',
+  ).split(' ');
+  return `${d} ${months[m - 1]} ${y}`;
+}
+
 /**
  * Turns what a person typed into an exact amount, or null.
  *

@@ -16,6 +16,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Alert, AlertVerification, api, canReview } from '../../src/api/client';
 import { fullTime } from '../../src/format';
+import { say, useLang } from '../../src/lang';
 import { useSession } from '../../src/session';
 import { colors, fonts, radius } from '../../src/theme';
 import { AuthImage } from '../../src/ui/AuthImage';
@@ -23,12 +24,15 @@ import { CheckList, HashBlock } from '../../src/ui/Evidence';
 import { Icon } from '../../src/ui/Icon';
 import { FadeUp, PressScale, Skeleton } from '../../src/ui/motion';
 import { SEVERITY, STATUS_LABEL } from '../../src/ui/severity';
+import { stored } from '../../src/words';
 
 export default function AlertDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { session } = useSession();
   const mayReview = canReview(session?.role);
+  const { t } = useLang();
+  const [technical, setTechnical] = useState(false);
 
   const [alert, setAlert] = useState<Alert | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +50,7 @@ export default function AlertDetail() {
       setAlert(await api.alert(String(id)));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load this alert');
+      setError(e instanceof Error ? e.message : say('Tidak dapat membaca amaran ini.', 'Could not load this alert.'));
     }
   }, [id]);
 
@@ -69,7 +73,7 @@ export default function AlertDetail() {
       ]);
       setResult(r);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Verification failed');
+      setError(e instanceof Error ? e.message : say('Semakan tidak berjaya.', 'The check failed.'));
     } finally {
       setVerifying(false);
     }
@@ -84,7 +88,7 @@ export default function AlertDetail() {
       setNote('');
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save your review');
+      setError(e instanceof Error ? e.message : say('Tidak dapat menyimpan semakan anda.', 'Could not save your review.'));
     } finally {
       setSaving(null);
     }
@@ -128,21 +132,21 @@ export default function AlertDetail() {
             </View>
             <Text style={s.when}>{fullTime(alert.occurred_at)}</Text>
           </View>
-          <Text style={s.title}>{alert.title}</Text>
-          {!!alert.detail && <Text style={s.detail}>{alert.detail}</Text>}
+          <Text style={s.title}>{stored(alert.title)}</Text>
+          {!!alert.detail && <Text style={s.detail}>{stored(alert.detail)}</Text>}
           <Text style={s.source}>
-            Raised by {alert.device_label ?? 'the ledger'} {'·'} alert #{alert.seq}
+            {t('Daripada', 'From')} {alert.device_label ?? t('rekod kewangan', 'the records')} · {t('amaran', 'alert')} #{alert.seq}
           </Text>
         </FadeUp>
 
         {alert.has_photo && (
           <FadeUp delay={100}>
-            <Text style={s.section}>PHOTO EVIDENCE</Text>
+            <Text style={s.section}>{t('Gambar', 'Photo')}</Text>
             <Pressable onPress={() => !photoFailed && setZoom(true)} style={s.photoWrap}>
               {photoFailed ? (
                 <View style={s.photoFail}>
                   <Icon name="camera" size={26} color={colors.inkFaint} />
-                  <Text style={s.photoFailText}>Could not load the photo</Text>
+                  <Text style={s.photoFailText}>{t('Gambar tidak dapat dibuka', 'Could not load the photo')}</Text>
                 </View>
               ) : (
                 <>
@@ -156,31 +160,25 @@ export default function AlertDetail() {
                 </>
               )}
             </Pressable>
-            <Text style={s.photoHint}>Tap the photo to enlarge</Text>
+            <Text style={s.photoHint}>{t('Tekan gambar untuk besarkan', 'Tap the photo to enlarge')}</Text>
           </FadeUp>
         )}
 
         <FadeUp delay={180}>
-          <Text style={s.section}>VERIFY THE EVIDENCE</Text>
+          <Text style={s.section}>{t('Adakah bukti ini asli?', 'Is this evidence genuine?')}</Text>
           <View style={s.card}>
-            <HashBlock
-              label="SHA-256 RECORDED WHEN IT ARRIVED"
-              value={alert.photo_sha256}
-            />
-            {result && (
-              <View style={{ marginTop: 10 }}>
-                <HashBlock
-                  label="SHA-256 RECOMPUTED FROM THE STORED PHOTO NOW"
-                  value={result.recomputed_sha256}
-                  state={hashState}
-                />
-              </View>
+            {!result && !verifying && (
+              <Text style={s.verifyingText}>
+                {t(
+                  'Sistem akan menyemak sama ada gambar dan butiran ini pernah diubah sejak diterima.',
+                  'The system will check whether this photo and its details have changed since they arrived.',
+                )}
+              </Text>
             )}
-
             {verifying ? (
               <View style={s.verifying}>
                 <ActivityIndicator color={colors.green} />
-                <Text style={s.verifyingText}>Recomputing hashes and checking the chain</Text>
+                <Text style={s.verifyingText}>{t('Sedang menyemak…', 'Checking…')}</Text>
               </View>
             ) : result ? (
               <FadeUp style={{ marginTop: 16 }}>
@@ -199,19 +197,38 @@ export default function AlertDetail() {
                     style={[s.bannerText, { color: result.intact ? colors.green : colors.danger }]}
                   >
                     {result.intact
-                      ? 'Evidence intact. Nothing has been altered.'
-                      : 'Evidence does not verify. Treat this alert as tampered.'}
+                      ? t('Bukti asli. Tiada apa-apa yang diubah.', 'Genuine. Nothing has been altered.')
+                      : t('Bukti tidak sepadan. Anggap ia telah diusik.', 'It does not match. Treat it as tampered with.')}
                   </Text>
                 </View>
                 <View style={{ marginTop: 14 }}>
                   <CheckList checks={result.checks} />
                 </View>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setTechnical((v) => !v)}
+                  style={{ minHeight: 48, justifyContent: 'center' }}
+                >
+                  <Text style={s.linkTitle}>
+                    {technical ? t('Sembunyi butiran teknikal', 'Hide technical details') : t('Butiran teknikal', 'Technical details')}
+                  </Text>
+                </Pressable>
+                {technical && (
+                  <View style={{ gap: 10 }}>
+                    <HashBlock label={t('SHA-256 semasa diterima', 'SHA-256 when it arrived')} value={alert.photo_sha256} />
+                    <HashBlock
+                      label={t('SHA-256 dikira semula sekarang', 'SHA-256 recomputed now')}
+                      value={result.recomputed_sha256}
+                      state={hashState}
+                    />
+                  </View>
+                )}
               </FadeUp>
             ) : null}
 
             <PressScale onPress={runVerify} disabled={verifying} style={s.verifyBtn}>
               <Icon name="shield" size={18} color={colors.onGreen} strokeWidth={2} />
-              <Text style={s.verifyBtnText}>{result ? 'Verify again' : 'Verify now'}</Text>
+              <Text style={s.verifyBtnText}>{result ? t('Semak semula', 'Check again') : t('Semak sekarang', 'Check now')}</Text>
             </PressScale>
           </View>
         </FadeUp>
@@ -223,8 +240,8 @@ export default function AlertDetail() {
               style={s.link}
             >
               <View style={{ flex: 1 }}>
-                <Text style={s.linkTitle}>View the ledger entry</Text>
-                <Text style={s.linkSub}>{alert.related_reference} and its seal</Text>
+                <Text style={s.linkTitle}>{t('Lihat rekod berkaitan', 'See the related record')}</Text>
+                <Text style={s.linkSub}>{alert.related_reference}</Text>
               </View>
               <Icon name="chevron" size={18} color={colors.inkFaint} />
             </PressScale>
@@ -232,7 +249,7 @@ export default function AlertDetail() {
         )}
 
         <FadeUp delay={300}>
-          <Text style={s.section}>COMMITTEE REVIEW</Text>
+          <Text style={s.section}>{t('Semakan AJK', 'Committee review')}</Text>
           <View style={s.card}>
             <View style={s.statusRow}>
               <Text style={s.statusLabel}>Status</Text>
@@ -246,7 +263,7 @@ export default function AlertDetail() {
             {!open && (
               <View style={s.reviewed}>
                 <Text style={s.reviewedBy}>
-                  {STATUS_LABEL[alert.status]} by {alert.reviewed_by ?? 'a reviewer'}
+                  {STATUS_LABEL[alert.status]} {t('oleh', 'by')} {alert.reviewed_by ?? t('penyemak', 'a reviewer')}
                   {alert.reviewed_at ? `  ·  ${fullTime(alert.reviewed_at)}` : ''}
                 </Text>
                 {!!alert.review_note && <Text style={s.reviewNote}>{alert.review_note}</Text>}
@@ -259,7 +276,8 @@ export default function AlertDetail() {
                   style={s.note}
                   value={note}
                   onChangeText={setNote}
-                  placeholder="What did you check? (optional)"
+                  placeholder={t('Apa yang anda semak? (pilihan)', 'What did you check? (optional)')}
+                  accessibilityLabel={t('Catatan semakan', 'Review note')}
                   placeholderTextColor={colors.inkFaint}
                   multiline
                   editable={!saving}
@@ -273,7 +291,7 @@ export default function AlertDetail() {
                     {saving === 'escalate' ? (
                       <ActivityIndicator color={colors.danger} />
                     ) : (
-                      <Text style={[s.btnText, { color: colors.danger }]}>Escalate</Text>
+                      <Text style={[s.btnText, { color: colors.danger }]}>{t('Rujuk lanjut', 'Refer on')}</Text>
                     )}
                   </PressScale>
                   <PressScale
@@ -284,7 +302,7 @@ export default function AlertDetail() {
                     {saving === 'acknowledge' ? (
                       <ActivityIndicator color={colors.onGreen} />
                     ) : (
-                      <Text style={[s.btnText, { color: colors.onGreen }]}>Acknowledge</Text>
+                      <Text style={[s.btnText, { color: colors.onGreen }]}>{t('Sudah disemak', 'Reviewed')}</Text>
                     )}
                   </PressScale>
                 </View>
@@ -293,8 +311,10 @@ export default function AlertDetail() {
 
             {open && !mayReview && (
               <Text style={s.sod}>
-                Treasurers can view alerts but cannot clear them. The person who handles the cash
-                should not be the one who signs off on its alerts.
+                {t(
+                  'Bendahari boleh melihat amaran tetapi tidak boleh menutupnya. Orang yang memegang wang tidak patut mengesahkan amarannya sendiri.',
+                  'Treasurers can view alerts but cannot close them. The person who handles the cash should not be the one who signs off on its alerts.',
+                )}
               </Text>
             )}
           </View>
@@ -306,7 +326,7 @@ export default function AlertDetail() {
       <Modal visible={zoom} transparent animationType="fade" onRequestClose={() => setZoom(false)}>
         <Pressable style={s.modal} onPress={() => setZoom(false)}>
           <AuthImage alertId={alert.id} style={s.zoomImg} resizeMode="contain" />
-          <Text style={s.zoomHint}>Tap anywhere to close</Text>
+          <Text style={s.zoomHint}>{t('Tekan di mana-mana untuk tutup', 'Tap anywhere to close')}</Text>
         </Pressable>
       </Modal>
     </KeyboardAvoidingView>
@@ -319,15 +339,15 @@ const s = StyleSheet.create({
 
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sevPill: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999 },
-  sevText: { fontFamily: fonts.bodyBold, fontSize: 11, letterSpacing: 1.2 },
-  when: { fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint },
+  sevText: { fontFamily: fonts.bodyBold, fontSize: 13, letterSpacing: 1.2 },
+  when: { fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint },
   title: { fontFamily: fonts.display, fontSize: 22, letterSpacing: -0.5, color: colors.ink, marginTop: 12 },
   detail: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.inkSoft, marginTop: 8 },
-  source: { fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint, marginTop: 10 },
+  source: { fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint, marginTop: 10 },
 
   section: {
     fontFamily: fonts.bodyBold,
-    fontSize: 10.5,
+    fontSize: 13,
     letterSpacing: 1.3,
     color: colors.inkFaint,
     marginTop: 24,
@@ -344,8 +364,8 @@ const s = StyleSheet.create({
   },
   photo: { width: '100%', height: '100%' },
   photoFail: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  photoFailText: { fontFamily: fonts.body, fontSize: 13, color: colors.inkFaint },
-  photoHint: { fontFamily: fonts.body, fontSize: 11.5, color: colors.inkFaint, marginTop: 8, textAlign: 'center' },
+  photoFailText: { fontFamily: fonts.body, fontSize: 15, color: colors.inkFaint },
+  photoHint: { fontFamily: fonts.body, fontSize: 13.5, color: colors.inkFaint, marginTop: 8, textAlign: 'center' },
 
   card: {
     padding: 14,
@@ -355,9 +375,9 @@ const s = StyleSheet.create({
     borderColor: colors.line,
   },
   verifying: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16 },
-  verifyingText: { fontFamily: fonts.body, fontSize: 13, color: colors.inkSoft, flex: 1 },
+  verifyingText: { fontFamily: fonts.body, fontSize: 15, color: colors.inkSoft, flex: 1 },
   banner: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: radius.md },
-  bannerText: { fontFamily: fonts.bodyBold, fontSize: 13.5, flex: 1 },
+  bannerText: { fontFamily: fonts.bodyBold, fontSize: 15, flex: 1 },
   verifyBtn: {
     marginTop: 16,
     height: 52,
@@ -381,16 +401,16 @@ const s = StyleSheet.create({
     borderColor: colors.line,
   },
   linkTitle: { fontFamily: fonts.bodySemi, fontSize: 14, color: colors.ink },
-  linkSub: { fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint, marginTop: 2 },
+  linkSub: { fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint, marginTop: 2 },
 
   statusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   statusLabel: { fontFamily: fonts.bodySemi, fontSize: 14, color: colors.ink },
   pill: { paddingVertical: 4, paddingHorizontal: 11, borderRadius: 999 },
   pillOpen: { backgroundColor: colors.brassSoft },
   pillDone: { backgroundColor: colors.greenSoft },
-  pillText: { fontFamily: fonts.bodyBold, fontSize: 12 },
+  pillText: { fontFamily: fonts.bodyBold, fontSize: 14 },
   reviewed: { marginTop: 12, gap: 4 },
-  reviewedBy: { fontFamily: fonts.body, fontSize: 12.5, color: colors.inkFaint },
+  reviewedBy: { fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint },
   reviewNote: { fontFamily: fonts.body, fontSize: 14, color: colors.inkSoft, lineHeight: 20 },
   note: {
     marginTop: 14,
@@ -410,11 +430,11 @@ const s = StyleSheet.create({
   btnGhost: { borderWidth: 1, borderColor: colors.danger + '66', backgroundColor: colors.dangerSoft },
   btnSolid: { backgroundColor: colors.green },
   btnText: { fontFamily: fonts.bodyBold, fontSize: 15 },
-  sod: { fontFamily: fonts.body, fontSize: 12.5, color: colors.inkFaint, lineHeight: 19, marginTop: 12 },
+  sod: { fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint, lineHeight: 19, marginTop: 12 },
 
-  error: { fontFamily: fonts.body, fontSize: 13, color: colors.danger, marginTop: 12 },
+  error: { fontFamily: fonts.body, fontSize: 15, color: colors.danger, marginTop: 12 },
 
   modal: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
   zoomImg: { width: '100%', height: '80%' },
-  zoomHint: { fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint, marginTop: 12 },
+  zoomHint: { fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint, marginTop: 12 },
 });

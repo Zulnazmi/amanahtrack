@@ -3,21 +3,18 @@ import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { api, Person, Session } from '../src/api/client';
+import { useLang } from '../src/lang';
+import { roleName } from '../src/roles';
 import { useSession } from '../src/session';
 import { colors } from '../src/theme';
 import { Button, Choices, Field, form, Notice } from '../src/ui/Form';
 
-const ROLES: { value: Session['role']; label: string }[] = [
-  { value: 'treasurer', label: 'Bendahari' },
-  { value: 'committee', label: 'AJK' },
-  { value: 'auditor', label: 'Juruaudit' },
-  { value: 'admin', label: 'Admin' },
-];
-const ROLE = Object.fromEntries(ROLES.map((r) => [r.value, r.label]));
+const ROLES: Session['role'][] = ['treasurer', 'committee', 'auditor', 'admin'];
 
 type Pending = { id: string; what: 'access' | 'reset' };
 
 export default function PeopleScreen() {
+  const { t } = useLang();
   const { session } = useSession();
   const admin = session?.role === 'admin';
   const [people, setPeople] = useState<Person[] | null>(null);
@@ -62,7 +59,7 @@ export default function PeopleScreen() {
   }
 
   function add() {
-    if (name.trim().length < 2 || !email.includes('@')) return setError('Masukkan nama dan e-mel yang sah.');
+    if (name.trim().length < 2 || !email.includes('@')) return setError(t('Masukkan nama dan e-mel yang sah.', 'Enter a valid name and email.'));
     run(async () => {
       const p = await api.addPerson({ name: name.trim(), email: email.trim(), role });
       setTemp({ name: p.name, password: p.temporary_password });
@@ -87,23 +84,28 @@ export default function PeopleScreen() {
     <ScrollView style={form.screen} contentContainerStyle={form.content} keyboardShouldPersistTaps="handled">
       {temp && (
         <View style={form.card}>
-          <Text style={form.strong}>Kata laluan sementara untuk {temp.name}</Text>
+          <Text style={form.strong}>{t('Kata laluan sementara untuk', 'Temporary password for')} {temp.name}</Text>
           <Text selectable style={form.big}>{temp.password}</Text>
-          <Text style={form.text}>Berikan kepada orang itu sahaja. Ia hanya ditunjukkan sekali dan mesti ditukar semasa log masuk.</Text>
-          <Button label="Sudah disalin" quiet onPress={() => setTemp(null)} />
+          <Text style={form.text}>
+            {t(
+              'Berikan kepada orang itu sahaja. Ia hanya ditunjukkan sekali dan mesti ditukar semasa log masuk.',
+              'Give it only to that person. It is shown once and must be changed at sign in.',
+            )}
+          </Text>
+          <Button label={t('Sudah disalin', 'I have copied it')} quiet onPress={() => setTemp(null)} />
         </View>
       )}
       {error && <Notice ok={false} text={error} />}
 
-      {admin && !adding && <Button label="Tambah pengguna" onPress={() => setAdding(true)} />}
+      {admin && !adding && <Button label={t('Tambah pengguna', 'Add a user')} onPress={() => setAdding(true)} />}
       {adding && (
         <View style={form.card}>
-          <Field label="Nama penuh" value={name} onChangeText={setName} autoCapitalize="words" maxLength={120} />
-          <Field label="E-mel" value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" />
-          <Text style={form.strong}>Peranan</Text>
-          <Choices value={role} onChange={setRole} options={ROLES} />
-          <Button label="Tambah" busy={busy} onPress={add} />
-          <Button label="Batal" quiet onPress={() => setAdding(false)} />
+          <Field label={t('Nama penuh', 'Full name')} value={name} onChangeText={setName} autoCapitalize="words" maxLength={120} />
+          <Field label={t('E-mel', 'Email')} value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" />
+          <Text style={form.strong}>{t('Tugas', 'Role')}</Text>
+          <Choices value={role} onChange={setRole} options={ROLES.map((r) => ({ value: r, label: roleName(r, t) }))} />
+          <Button label={t('Tambah', 'Add')} busy={busy} onPress={add} />
+          <Button label={t('Batal', 'Cancel')} quiet onPress={() => setAdding(false)} />
         </View>
       )}
 
@@ -113,24 +115,33 @@ export default function PeopleScreen() {
           <Text style={form.strong}>{p.name}</Text>
           <Text style={form.faint}>{p.email}</Text>
           <Text style={form.text}>
-            {ROLE[p.role]}{!p.active ? ' · Akses dibuang' : p.must_change_password ? ' · Belum tetapkan kata laluan' : ''}
+            {roleName(p.role, t)}
+            {!p.active
+              ? t(' · Akses dibuang', ' · Access removed')
+              : p.must_change_password
+                ? t(' · Belum tetapkan kata laluan', ' · Has not set a password')
+                : ''}
           </Text>
           {admin && p.email !== session?.email && (
             pending?.id === p.id ? (
               <View style={{ gap: 10 }}>
                 <Button
-                  label={pending.what === 'reset' ? 'Ya, tetapkan semula' : p.active ? 'Ya, buang akses' : 'Ya, pulihkan akses'}
+                  label={pending.what === 'reset'
+                      ? t('Ya, tetapkan semula', 'Yes, reset it')
+                      : p.active
+                        ? t('Ya, buang akses', 'Yes, remove access')
+                        : t('Ya, pulihkan akses', 'Yes, restore access')}
                   danger
                   busy={busy}
                   onPress={() => confirmPending(p)}
                 />
-                <Button label="Kembali" quiet onPress={() => setPending(null)} />
+                <Button label={t('Kembali', 'Back')} quiet onPress={() => setPending(null)} />
               </View>
             ) : (
               <View style={{ gap: 10 }}>
-                {p.active && <Button label="Tetapkan semula kata laluan" quiet onPress={() => setPending({ id: p.id, what: 'reset' })} />}
+                {p.active && <Button label={t('Tetapkan semula kata laluan', 'Reset password')} quiet onPress={() => setPending({ id: p.id, what: 'reset' })} />}
                 <Button
-                  label={p.active ? 'Buang akses' : 'Pulihkan akses'}
+                  label={p.active ? t('Buang akses', 'Remove access') : t('Pulihkan akses', 'Restore access')}
                   quiet={!p.active}
                   danger={p.active}
                   onPress={() => setPending({ id: p.id, what: 'access' })}

@@ -4,16 +4,19 @@ import { useFocusEffect, useRouter } from 'expo-router';
 
 import { Alert, AlertStatus, api } from '../src/api/client';
 import { timeAgo } from '../src/format';
+import { say, useLang } from '../src/lang';
 import { useRetry } from '../src/retry';
 import { colors, fonts, radius } from '../src/theme';
 import { Icon } from '../src/ui/Icon';
 import { FadeUp, PressScale, Skeleton } from '../src/ui/motion';
 import { SEVERITY, STATUS_LABEL } from '../src/ui/severity';
+import { stored } from '../src/words';
 
 type Filter = 'open' | 'all';
 
 export default function AlertsScreen() {
   const router = useRouter();
+  const { t } = useLang();
   const [filter, setFilter] = useState<Filter>('open');
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +32,7 @@ export default function AlertsScreen() {
       setFailures(0);
     } catch (e) {
       setFailures((n) => n + 1);
-      setError(e instanceof Error ? e.message : 'Could not load alerts');
+      setError(e instanceof Error ? e.message : say('Tidak dapat membaca amaran.', 'Could not load alerts.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -71,7 +74,7 @@ export default function AlertsScreen() {
               style={[s.chip, filter === f && s.chipOn]}
             >
               <Text style={[s.chipText, filter === f && s.chipTextOn]}>
-                {f === 'open' ? 'Needs review' : 'All alerts'}
+                {f === 'open' ? t('Belum disemak', 'Needs review') : t('Semua', 'All')}
               </Text>
             </PressScale>
           ))}
@@ -95,10 +98,13 @@ export default function AlertsScreen() {
               <Icon name="shield" size={26} color={colors.green} />
             </View>
             <Text style={s.emptyTitle}>
-              {filter === 'open' ? 'Nothing needs review' : 'No alerts yet'}
+              {filter === 'open' ? t('Tiada amaran untuk disemak', 'Nothing needs review') : t('Belum ada amaran', 'No alerts yet')}
             </Text>
             <Text style={s.emptyBody}>
-              The box and the ledger raise an alert when something does not add up.
+              {t(
+                'Amaran muncul di sini apabila ada sesuatu yang luar biasa pada tabung atau rekod.',
+                'An alert appears here when something is unusual with the box or the records.',
+              )}
             </Text>
           </FadeUp>
         ) : (
@@ -127,12 +133,12 @@ function AlertCard({ alert: a, onPress }: { alert: Alert; onPress: () => void })
           <Text style={s.time}>{timeAgo(a.occurred_at)}</Text>
         </View>
         <Text style={s.title} numberOfLines={2}>
-          {a.title}
+          {stored(a.title)}
         </Text>
         <View style={s.metaRow}>
           <Text style={s.meta} numberOfLines={1}>
-            {a.device_label ?? 'Ledger'}
-            {a.has_photo ? '  ·  photo evidence' : ''}
+            {a.device_label ?? say('Rekod', 'Records')}
+            {a.has_photo ? say('  ·  ada gambar', '  ·  photo') : ''}
           </Text>
           <View style={[s.pill, open ? s.pillOpen : s.pillDone]}>
             <Text style={[s.pillText, open ? { color: colors.brass } : { color: colors.inkFaint }]}>
@@ -162,7 +168,7 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   chipOn: { backgroundColor: colors.greenSoft, borderColor: colors.green },
-  chipText: { fontFamily: fonts.bodySemi, fontSize: 13, color: colors.inkSoft },
+  chipText: { fontFamily: fonts.bodySemi, fontSize: 15, color: colors.inkSoft },
   chipTextOn: { color: colors.green },
 
   errorBar: { padding: 12, backgroundColor: colors.dangerSoft, borderRadius: radius.md },
@@ -181,7 +187,7 @@ const s = StyleSheet.create({
   emptyTitle: { fontFamily: fonts.display, fontSize: 17, color: colors.ink },
   emptyBody: {
     fontFamily: fonts.body,
-    fontSize: 13,
+    fontSize: 15,
     color: colors.inkFaint,
     textAlign: 'center',
     maxWidth: 260,
@@ -205,13 +211,13 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   topRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  sev: { fontFamily: fonts.bodyBold, fontSize: 10.5, letterSpacing: 1.2 },
-  time: { fontFamily: fonts.body, fontSize: 11.5, color: colors.inkFaint },
+  sev: { fontFamily: fonts.bodyBold, fontSize: 13, letterSpacing: 1.2 },
+  time: { fontFamily: fonts.body, fontSize: 13.5, color: colors.inkFaint },
   title: { fontFamily: fonts.bodySemi, fontSize: 15, color: colors.ink, marginTop: 3 },
   metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, gap: 8 },
-  meta: { flex: 1, fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint },
+  meta: { flex: 1, fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint },
   pill: { paddingVertical: 3, paddingHorizontal: 9, borderRadius: 999 },
   pillOpen: { backgroundColor: colors.brassSoft },
   pillDone: { backgroundColor: colors.surfaceSunk },
-  pillText: { fontFamily: fonts.bodyBold, fontSize: 10.5 },
+  pillText: { fontFamily: fonts.bodyBold, fontSize: 13 },
 });

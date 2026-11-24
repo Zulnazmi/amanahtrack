@@ -1,18 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { api, Fund, newRequestId, RuleVerdict } from '../src/api/client';
 import { parseMoney } from '../src/format';
-import { colors, radius, ringgit, space, type } from '../src/theme';
+import { useLang } from '../src/lang';
+import { colors, fonts, radius, ringgit } from '../src/theme';
+import { Button, Choices, Field, form, Notice } from '../src/ui/Form';
+import { PURPOSES, purposeName } from '../src/words';
 
 /**
  * The screen the whole product exists for.
@@ -22,92 +17,90 @@ import { colors, radius, ringgit, space, type } from '../src/theme';
  * they have typed an amount and a description, not after. When a spend is
  * refused the screen says which fund would work instead, because refusing
  * without offering a way forward just teaches people to work around you.
+ *
+ * A record is permanent, so it is shown once more before it is made.
  */
-
-export const PURPOSES: { code: string; label: string; group: string }[] = [
-  { code: 'asnaf_fakir', label: 'Asnaf fakir', group: 'Asnaf' },
-  { code: 'asnaf_miskin', label: 'Asnaf miskin', group: 'Asnaf' },
-  { code: 'asnaf_amil', label: 'Asnaf amil', group: 'Asnaf' },
-  { code: 'asnaf_gharimin', label: 'Asnaf gharimin', group: 'Asnaf' },
-  { code: 'asnaf_ibnussabil', label: 'Ibnus sabil', group: 'Asnaf' },
-  { code: 'mosque_maintenance', label: 'Penyelenggaraan', group: 'Operasi' },
-  { code: 'utilities', label: 'Bil utiliti', group: 'Operasi' },
-  { code: 'staff_salary', label: 'Gaji petugas', group: 'Operasi' },
-  { code: 'education', label: 'Kelas agama', group: 'Program' },
-  { code: 'orphan_welfare', label: 'Anak yatim', group: 'Program' },
-  { code: 'funeral_support', label: 'Khairat kematian', group: 'Program' },
-  { code: 'ramadan_programme', label: 'Program Ramadan', group: 'Program' },
-];
 
 export default function SpendScreen() {
   const router = useRouter();
+  const { t } = useLang();
   const given = useLocalSearchParams<{ fund?: string; amount?: string; purpose?: string }>();
-  const fundParam = given.fund;
 
   const [funds, setFunds] = useState<Fund[]>([]);
-  const [fundCode, setFundCode] = useState(fundParam ?? '');
-  const [purpose, setPurpose] = useState(
-    PURPOSES.some((p) => p.code === given.purpose) ? given.purpose! : '',
-  );
+  // Never chosen for the person: the wrong fund is the costliest mistake here
+  const [fundCode, setFundCode] = useState(given.fund ?? '');
+  const [purpose, setPurpose] = useState(PURPOSES.some((p) => p.code === given.purpose) ? given.purpose! : '');
   const [amount, setAmount] = useState(given.amount ?? '');
   const [description, setDescription] = useState('');
 
   const [verdict, setVerdict] = useState<RuleVerdict | null>(null);
   const [checking, setChecking] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [checkAgain, setCheckAgain] = useState(0);
+  const [review, setReview] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [posted, setPosted] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const [needsApproval, setNeedsApproval] = useState(false);
   const [sent, setSent] = useState(false);
   const requestId = useRef(newRequestId());
 
   useEffect(() => {
-    api.funds().then((f) => {
-      setFunds(f);
-      const first = f.find((x) => x.code !== 'cash');
-      if (!fundCode && first) setFundCode(first.code);
-    }).catch((e: Error) => setFormError(e.message));
+    api
+      .funds()
+      .then((f) => {
+        const usable = f.filter((x) => x.code !== 'cash');
+        setFunds(usable);
+        setFundCode((c) => (usable.some((x) => x.code === c) ? c : ''));
+      })
+      .catch((e: Error) => setError(e.message));
   }, []);
 
-  const runCheck = useCallback(async () => {
-    if (!fundCode || !purpose) {
-      setVerdict(null);
-      return;
-    }
-    setChecking(true);
-    try {
-      setVerdict(await api.checkSpend(fundCode, purpose));
-    } catch (e) {
-      setVerdict(null);
-      setFormError((e as Error).message);
-    } finally {
-      setChecking(false);
-    }
-  }, [fundCode, purpose]);
-
   useEffect(() => {
-    runCheck();
-  }, [runCheck]);
+    setVerdict(null);
+    if (!fundCode || !purpose) return;
+    let newest = true;
+    setChecking(true);
+    api
+      .checkSpend(fundCode, purpose)
+      .then((v) => newest && setVerdict(v))
+      .catch((e: Error) => newest && setError(e.message))
+      .finally(() => newest && setChecking(false));
+    return () => {
+      newest = false;
+      setChecking(false);
+    };
+  }, [fundCode, purpose, checkAgain]);
 
   const selected = funds.find((f) => f.code === fundCode);
   const blocked = verdict !== null && !verdict.allowed;
   const money = parseMoney(amount);
-  const parsedAmount = money ? Number(money) : 0;
-  const overBalance =
-    selected && parsedAmount > 0 && parsedAmount > parseFloat(selected.balance);
+  const over = !!selected && !!money && Number(money) > parseFloat(selected.balance);
+
+  function check() {
+    setError(null);
+    if (!fundCode) return setError(t('Pilih dana dahulu.', 'Choose a fund first.'));
+    if (!purpose) return setError(t('Pilih tujuan belanja.', 'Choose what it is for.'));
+    if (!money || Number(money) <= 0) {
+      return setError(t('Masukkan jumlah yang sah, contohnya 150.00.', 'Enter a valid amount, for example 150.00.'));
+    }
+    if (over) return setError(t('Jumlah melebihi baki dana ini.', 'The amount is more than this fund holds.'));
+    if (!description.trim()) {
+      return setError(t('Tulis keterangan ringkas untuk rekod AJK.', 'Write a short note for the committee’s records.'));
+    }
+    if (checking) return;
+    if (!verdict) {
+      setCheckAgain((n) => n + 1);
+      return;
+    }
+    Keyboard.dismiss();
+    setReview(true);
+  }
 
   async function submit() {
-    setFormError(null);
-
-    if (!fundCode) return setFormError('Pilih dana dahulu.');
-    if (!purpose) return setFormError('Pilih tujuan perbelanjaan.');
-    if (!money || parsedAmount <= 0)
-      return setFormError('Masukkan jumlah yang sah.');
-    if (!description.trim())
-      return setFormError('Tulis keterangan ringkas untuk rekod AJK.');
-
-    setSubmitting(true);
+    if (!money) return;
+    setError(null);
+    setBusy(true);
     const body = {
       fund_code: fundCode,
       amount: money,
@@ -115,313 +108,220 @@ export default function SpendScreen() {
       description: description.trim(),
       request_id: requestId.current,
     };
-    if (needsApproval) {
-      try {
+    try {
+      if (needsApproval) {
         await api.requestSpend(body);
         setSent(true);
-      } catch (e) {
-        setFormError((e as Error).message);
-      } finally {
-        setSubmitting(false);
+        return;
       }
-      return;
-    }
-    const result = await api.disburse(body);
-    setSubmitting(false);
-
-    if (result.ok) {
-      setPosted(result.data.reference);
-      setTimeout(() => router.back(), 1400);
-    } else if ('refusal' in result) {
-      setVerdict(result.refusal);
-    } else if (result.code === 'approval_required') {
-      setNeedsApproval(true);
-    } else {
-      setFormError(result.error);
+      const result = await api.disburse(body);
+      if (result.ok) setPosted(result.data.reference);
+      else if ('refusal' in result) {
+        setVerdict(result.refusal);
+        setReview(false);
+      } else if (result.code === 'approval_required') setNeedsApproval(true);
+      else setError(result.error);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
-  if (sent) {
+  if (sent || posted) {
     return (
-      <View style={[st.screen, st.centre, { padding: space.xl }]}>
-        <Text style={st.postedTitle}>Dihantar untuk kelulusan</Text>
-        <Text style={[st.postedNote, { textAlign: 'center' }]}>
-          Wang belum direkod keluar. Admin atau AJK lain perlu meluluskannya dahulu.
+      <ScrollView style={form.screen} contentContainerStyle={form.content}>
+        <View style={form.card}>
+          <Text style={[form.big, { color: colors.green }]}>
+            {sent ? t('Dihantar untuk kelulusan', 'Sent for approval') : t('Belanja direkod', 'Spending recorded')}
+          </Text>
+          <Text style={form.text}>
+            {sent
+              ? t(
+                  'Wang belum direkod keluar. Pentadbir atau AJK lain perlu meluluskannya dahulu.',
+                  'The money is not recorded as spent yet. Another admin or committee member must approve it first.',
+                )
+              : t(`Nombor rekod: ${posted}`, `Record number: ${posted}`)}
+          </Text>
+        </View>
+        <Button label={t('Selesai', 'Done')} onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+      </ScrollView>
+    );
+  }
+
+  if (review && selected && money) {
+    return (
+      <ScrollView style={form.screen} contentContainerStyle={form.content}>
+        <Text style={form.lede}>
+          {needsApproval
+            ? t(
+                'Belanja ini perlu diluluskan oleh orang kedua. Semak, kemudian hantar.',
+                'This spending needs a second person’s approval. Check, then send.',
+              )
+            : t('Semak dahulu. Rekod ini kekal dan tidak boleh dipadam.', 'Check first. This record is permanent and cannot be deleted.')}
         </Text>
-        <Pressable style={[st.submit, { alignSelf: 'stretch' }]} onPress={() => router.back()}>
-          <Text style={st.submitText}>Selesai</Text>
-        </Pressable>
-      </View>
+        <View style={form.card}>
+          <Text style={form.big}>{ringgit(money)}</Text>
+          <Text style={form.strong}>
+            {t('Daripada', 'From')} {t(selected.label_ms, selected.label_en)}
+          </Text>
+          <Text style={form.text}>
+            {t('Untuk', 'For')}: {purposeName(purpose)}
+          </Text>
+          <Text style={form.text}>{description.trim()}</Text>
+          <Text style={form.faint}>
+            {t('Baki selepas ini', 'Left after this')}: {ringgit(parseFloat(selected.balance) - Number(money))}
+          </Text>
+        </View>
+        {error && <Notice ok={false} text={error} />}
+        <Button
+          label={needsApproval ? t('Hantar untuk kelulusan', 'Send for approval') : t('Betul, rekod belanja', 'Correct, record it')}
+          busy={busy}
+          onPress={submit}
+        />
+        <Button label={t('Betulkan', 'Go back and fix')} quiet busy={busy} onPress={() => setReview(false)} />
+      </ScrollView>
     );
   }
 
-  if (posted) {
-    return (
-      <View style={[st.screen, st.centre]}>
-        <Text style={st.postedTitle}>Direkod</Text>
-        <Text style={st.postedRef}>{posted}</Text>
-        <Text style={st.postedNote}>Entri telah dimeterai dalam lejar.</Text>
-      </View>
-    );
-  }
+  const groups = [
+    { key: 'mosque', label: t('Urusan masjid', 'Running the mosque') },
+    { key: 'people', label: t('Program dan kebajikan', 'Programmes and welfare') },
+    { key: 'asnaf', label: t('Asnaf zakat', 'Zakat recipients') },
+  ];
 
   return (
-    <ScrollView style={st.screen} contentContainerStyle={st.content}>
-      <Text style={st.title}>Rekod perbelanjaan</Text>
-
-      <Text style={st.label}>Ambil daripada dana</Text>
-      <View style={st.chipRow}>
-        {funds
-          .filter((f) => f.code !== 'cash')
-          .map((f) => {
-            const active = f.code === fundCode;
-            return (
-              <Pressable
-                key={f.id}
-                onPress={() => setFundCode(f.code)}
-                style={[st.chip, active && st.chipActive, !f.spendable && st.chipLocked]}
-              >
-                <Text style={[st.chipText, active && st.chipTextActive]}>
-                  {f.label_ms}
-                </Text>
-                <Text style={[st.chipSub, active && st.chipSubActive]}>
-                  {ringgit(f.balance)}
-                </Text>
-              </Pressable>
-            );
-          })}
-      </View>
-
-      <Text style={st.label}>Tujuan</Text>
-      <View style={st.chipRow}>
-        {PURPOSES.map((p) => {
-          const active = p.code === purpose;
+    <ScrollView style={form.screen} contentContainerStyle={form.content} keyboardShouldPersistTaps="handled">
+      <Text style={form.strong}>{t('Ambil daripada dana mana?', 'From which fund?')}</Text>
+      <View style={{ gap: 8 }}>
+        {funds.map((f) => {
+          const on = f.code === fundCode;
+          const name = t(f.label_ms, f.label_en);
           return (
             <Pressable
-              key={p.code}
-              onPress={() => setPurpose(p.code)}
-              style={[st.purposeChip, active && st.chipActive]}
+              key={f.id}
+              accessibilityRole="button"
+              accessibilityLabel={name}
+              accessibilityState={{ selected: on }}
+              onPress={() => setFundCode(f.code)}
+              style={[s.fund, on && s.fundOn]}
             >
-              <Text style={[st.chipText, active && st.chipTextActive]}>
-                {p.label}
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.fundName, on && { color: colors.green }]}>{name}</Text>
+                {!f.spendable && <Text style={form.faint}>{t('Dikunci', 'Locked')}</Text>}
+              </View>
+              <Text style={s.fundBalance}>{ringgit(f.balance)}</Text>
             </Pressable>
           );
         })}
       </View>
 
+      <Text style={form.strong}>{t('Untuk apa?', 'What is it for?')}</Text>
+      {groups.map((g) => (
+        <View key={g.key} style={{ gap: 8 }}>
+          <Text style={form.faint}>{g.label}</Text>
+          <Choices
+            value={purpose}
+            onChange={setPurpose}
+            options={PURPOSES.filter((p) => p.group === g.key).map((p) => ({ value: p.code, label: t(p.ms, p.en) }))}
+          />
+        </View>
+      ))}
+
       {checking && (
-        <View style={st.checking}>
-          <ActivityIndicator size="small" color={colors.inkFaint} />
-          <Text style={st.checkingText}>Menyemak hukum dana</Text>
+        <View style={s.checking}>
+          <ActivityIndicator size="small" color={colors.green} />
+          <Text style={form.text}>{t('Menyemak syarat dana…', 'Checking the fund’s rules…')}</Text>
         </View>
       )}
 
       {blocked && verdict && (
-        <View style={st.blockCard}>
-          <Text style={st.blockTitle}>Tidak dibenarkan</Text>
-          <Text style={st.blockBody}>{verdict.message_ms}</Text>
-          <Text style={st.blockBodyEn}>{verdict.message_en}</Text>
-          {verdict.suggested_funds.length > 0 && (
-            <View style={st.suggestRow}>
-              <Text style={st.suggestLabel}>Guna dana ini sebagai ganti:</Text>
-              {verdict.suggested_funds.map((code) => {
-                const alt = funds.find((f) => f.code !== 'cash' && f.category === code);
-                if (!alt) return null;
-                return (
-                  <Pressable
-                    key={code}
-                    style={st.suggestChip}
-                    onPress={() => setFundCode(alt.code)}
-                  >
-                    <Text style={st.suggestChipText}>{alt.label_ms}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+        <View style={s.block} accessibilityLiveRegion="polite">
+          <Text style={[form.strong, { color: colors.danger }]}>{t('Tidak dibenarkan', 'Not allowed')}</Text>
+          <Text style={form.text}>{t(verdict.message_ms, verdict.message_en)}</Text>
+          {funds.some((f) => verdict.suggested_funds.includes(f.category)) && (
+            <>
+              <Text style={form.strong}>{t('Guna dana ini sebagai ganti:', 'Use this fund instead:')}</Text>
+              <Choices
+                value={null}
+                onChange={setFundCode}
+                options={funds
+                  .filter((f) => verdict.suggested_funds.includes(f.category))
+                  .map((f) => ({ value: f.code, label: t(f.label_ms, f.label_en) }))}
+              />
+            </>
           )}
         </View>
       )}
-
       {verdict?.allowed && selected && (
-        <View style={st.okCard}>
-          <Text style={st.okText}>
-            Dibenarkan. Baki {selected.label_ms}: {ringgit(selected.balance)}
-          </Text>
-        </View>
+        <Notice
+          ok
+          text={t(
+            `Dibenarkan. Baki ${selected.label_ms}: ${ringgit(selected.balance)}`,
+            `Allowed. ${selected.label_en} holds ${ringgit(selected.balance)}`,
+          )}
+        />
       )}
 
-      <Text style={st.label}>Jumlah (RM)</Text>
-      <TextInput
-        style={[st.input, blocked && st.inputDisabled]}
-        value={amount}
-        onChangeText={setAmount}
-        keyboardType="decimal-pad"
-        placeholder="0.00"
-        placeholderTextColor={colors.inkFaint}
-        editable={!blocked}
-      />
-      {overBalance && (
-        <Text style={st.fieldError}>
-          Melebihi baki dana ({ringgit(selected!.balance)}).
-        </Text>
+      {!blocked && (
+        <>
+          <Field
+            label={t('Jumlah (RM)', 'Amount (RM)')}
+            value={amount}
+            onChangeText={setAmount}
+            keyboardType="decimal-pad"
+            placeholder="0.00"
+            hint={money ? ringgit(money) : undefined}
+          />
+          {over && (
+            <Notice
+              ok={false}
+              text={t(`Melebihi baki dana (${ringgit(selected!.balance)}).`, `More than the fund holds (${ringgit(selected!.balance)}).`)}
+            />
+          )}
+          <Field
+            label={t('Keterangan', 'Note')}
+            value={description}
+            onChangeText={setDescription}
+            maxLength={300}
+            placeholder={t('Contoh: bil elektrik bulan ini', 'Example: this month’s electricity bill')}
+            hint={t(
+              'Jangan tulis nama penerima bantuan. Catatan ini kekal.',
+              'Do not write the name of anyone receiving help. This note is permanent.',
+            )}
+            multiline
+          />
+          {error && <Notice ok={false} text={error} />}
+          <Button label={t('Seterusnya', 'Next')} busy={checking} onPress={check} />
+        </>
       )}
-
-      <Text style={st.label}>Keterangan</Text>
-      <TextInput
-        style={[st.input, st.inputMulti, blocked && st.inputDisabled]}
-        value={description}
-        onChangeText={setDescription}
-        placeholder="Contoh: bantuan 6 keluarga asnaf Kampung Baru"
-        placeholderTextColor={colors.inkFaint}
-        multiline
-        editable={!blocked}
-      />
-
-      {needsApproval && (
-        <View style={st.okCard}>
-          <Text style={st.okText}>
-            Perbelanjaan ini perlu diluluskan oleh orang kedua. Semak butiran, kemudian hantar.
-          </Text>
-        </View>
-      )}
-      {formError && <Text style={st.fieldError}>{formError}</Text>}
-
-      <Pressable
-        style={[st.submit, (blocked || submitting) && st.submitDisabled]}
-        onPress={submit}
-        disabled={blocked || submitting}
-      >
-        <Text style={st.submitText}>
-          {submitting ? 'Menghantar…' : needsApproval ? 'Hantar untuk kelulusan' : 'Rekod perbelanjaan'}
-        </Text>
-      </Pressable>
-
-      <Text style={st.footnote}>
-        Setiap entri dimeterai dan tidak boleh diubah selepas direkod.
-        Pembetulan dibuat dengan catatan balik, bukan suntingan.
-      </Text>
     </ScrollView>
   );
 }
 
-const st = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.paper },
-  centre: { alignItems: 'center', justifyContent: 'center' },
-  content: { padding: space.lg, paddingBottom: space.xxl },
-
-  title: { ...type.title, color: colors.ink, marginBottom: space.lg },
-  label: {
-    ...type.small,
-    color: colors.inkSoft,
-    marginTop: space.lg,
-    marginBottom: space.sm,
-    fontWeight: '600',
-  },
-
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  chip: {
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingVertical: space.sm,
-    paddingHorizontal: space.md,
-  },
-  purposeChip: {
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.surface,
-    borderRadius: radius.sm,
-    paddingVertical: space.sm,
-    paddingHorizontal: space.md,
-  },
-  chipActive: { backgroundColor: colors.ink, borderColor: colors.ink },
-  chipLocked: { borderStyle: 'dashed', borderColor: colors.lineStrong },
-  chipText: { ...type.small, color: colors.inkSoft },
-  chipTextActive: { color: colors.paper },
-  chipSub: { ...type.micro, color: colors.inkFaint, marginTop: 2 },
-  chipSubActive: { color: colors.greenSoft },
-
-  checking: {
+const s = StyleSheet.create({
+  fund: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.sm,
-    marginTop: space.lg,
+    gap: 12,
+    minHeight: 58,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.lineStrong,
+    backgroundColor: colors.surface,
   },
-  checkingText: { ...type.small, color: colors.inkFaint },
-
-  blockCard: {
-    marginTop: space.lg,
-    padding: space.lg,
+  fundOn: { borderColor: colors.green, backgroundColor: colors.greenSoft },
+  fundName: { fontFamily: fonts.bodySemi, fontSize: 16, color: colors.ink },
+  fundBalance: { fontFamily: fonts.display, fontSize: 15, color: colors.ink },
+  checking: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  block: {
+    padding: 16,
+    gap: 10,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,122,107,0.4)',
     backgroundColor: colors.dangerSoft,
-    borderRadius: radius.md,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.danger,
   },
-  blockTitle: { ...type.heading, color: colors.danger },
-  blockBody: { ...type.body, color: colors.danger, marginTop: space.sm, lineHeight: 21 },
-  blockBodyEn: {
-    ...type.small,
-    color: colors.danger,
-    marginTop: space.xs,
-    opacity: 0.75,
-  },
-  suggestRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: space.sm,
-    marginTop: space.md,
-  },
-  suggestLabel: { ...type.small, color: colors.danger, width: '100%' },
-  suggestChip: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.sm,
-    paddingVertical: space.xs,
-    paddingHorizontal: space.md,
-  },
-  suggestChipText: { ...type.small, color: colors.ink },
-
-  okCard: {
-    marginTop: space.lg,
-    padding: space.md,
-    backgroundColor: colors.greenSoft,
-    borderRadius: radius.md,
-  },
-  okText: { ...type.small, color: colors.green },
-
-  input: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: radius.md,
-    padding: space.md,
-    ...type.body,
-    color: colors.ink,
-  },
-  inputMulti: { minHeight: 72, textAlignVertical: 'top' },
-  inputDisabled: { backgroundColor: colors.surfaceSunk, color: colors.inkFaint },
-  fieldError: { ...type.small, color: colors.danger, marginTop: space.xs },
-
-  submit: {
-    marginTop: space.xl,
-    backgroundColor: colors.ink,
-    padding: space.lg,
-    borderRadius: radius.md,
-    alignItems: 'center',
-  },
-  submitDisabled: { backgroundColor: colors.lineStrong },
-  submitText: { ...type.body, color: colors.paper, fontWeight: '600' },
-
-  footnote: {
-    ...type.small,
-    color: colors.inkFaint,
-    marginTop: space.lg,
-    lineHeight: 19,
-  },
-
-  postedTitle: { ...type.title, color: colors.green },
-  postedRef: { ...type.mono, color: colors.inkSoft, marginTop: space.sm },
-  postedNote: { ...type.small, color: colors.inkFaint, marginTop: space.sm },
 });

@@ -111,6 +111,9 @@ def test_spending_needs_a_second_person(env):
     assert decide(c, a, aid).status_code == 409 and balance(c, t) == "60.00"
     desc = c.get("/i/m/transactions", headers=t).json()[0]["description"]
     assert "requested by Treasurer, approved by Committee" in desc
+    spent, given = c.get("/i/m/transactions", headers=t).json()
+    assert (spent["direction"], given["direction"]) == ("out", "in")
+    assert spent["fund_code"] == given["fund_code"] == SPEND["fund_code"]
     assert c.get("/i/m/verify", headers=t).json()["intact"]
 
 

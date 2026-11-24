@@ -152,6 +152,8 @@ export interface Txn {
   channel: string;
   status: 'provisional' | 'confirmed' | 'void';
   amount: string;
+  direction?: 'in' | 'out' | null;
+  fund_code?: string | null;
 }
 
 export interface RuleVerdict {

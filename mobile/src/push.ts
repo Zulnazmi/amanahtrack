@@ -4,6 +4,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { useRouter } from 'expo-router';
 
 import { api } from './api/client';
+import { say } from './lang';
 
 /**
  * Push notifications.
@@ -41,7 +42,7 @@ async function registerForPush(): Promise<string | null> {
   });
 
   await N.setNotificationChannelAsync('alerts', {
-    name: 'Box alerts',
+    name: say('Amaran tabung', 'Box alerts'),
     importance: N.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
     sound: 'default',

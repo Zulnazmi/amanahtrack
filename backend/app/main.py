@@ -247,6 +247,8 @@ class TxnOut(BaseModel):
     channel: Channel
     status: TxnStatus
     amount: Decimal
+    direction: str | None = None
+    fund_code: str | None = None
 
 
 # ---------------------------------------------------------------- helpers
@@ -276,6 +278,16 @@ def _txn_amount(txn: Transaction) -> Decimal:
     return sum(
         (e.amount for e in txn.entries if e.side.value == "credit"), Decimal("0")
     )
+
+
+def _txn_flow(txn: Transaction, codes: dict[str, str]) -> dict:
+    """Whether cash came in or went out, and the one fund it belongs to."""
+    cash = {e.side.value for e in txn.entries if codes.get(e.fund_id) == "cash"}
+    other = {codes.get(e.fund_id) for e in txn.entries if codes.get(e.fund_id) != "cash"}
+    return {
+        "direction": {"debit": "in", "credit": "out"}[cash.pop()] if len(cash) == 1 else None,
+        "fund_code": other.pop() if len(other) == 1 else None,
+    }
 
 
 # ------------------------------------------------------------------ routes
@@ -939,6 +951,9 @@ def list_transactions(
         .order_by(Transaction.seq.desc())
         .limit(limit)
     ).all()
+    codes = dict(
+        db.execute(select(Fund.id, Fund.code).where(Fund.institution_id == inst.id)).tuples().all()
+    )
     return [
         TxnOut(
             reference=t.reference,
@@ -947,6 +962,7 @@ def list_transactions(
             channel=t.channel,
             status=t.status,
             amount=_txn_amount(t),
+            **_txn_flow(t, codes),
         )
         for t in txns
     ]

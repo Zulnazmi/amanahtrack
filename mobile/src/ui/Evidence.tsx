@@ -1,7 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { Check } from '../api/client';
+import { say } from '../lang';
 import { colors, fonts, radius } from '../theme';
+import { stored } from '../words';
 import { Icon } from './Icon';
 import { FadeUp } from './motion';
 
@@ -26,7 +28,7 @@ export function HashBlock({
           {value.slice(32)}
         </Text>
       ) : (
-        <Text style={h.none}>none</Text>
+        <Text style={h.none}>{say('tiada', 'none')}</Text>
       )}
     </View>
   );
@@ -54,9 +56,9 @@ export function CheckList({ checks, stagger = 320 }: { checks: Check[]; stagger?
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={c2.label}>{c.label}</Text>
+                <Text style={c2.label}>{stored(c.label)}</Text>
                 <Text style={[c2.detail, tone === 'bad' && { color: colors.danger }]}>
-                  {c.detail}
+                  {stored(c.detail)}
                 </Text>
               </View>
             </View>
@@ -77,13 +79,13 @@ const h = StyleSheet.create({
   },
   label: {
     fontFamily: fonts.bodyBold,
-    fontSize: 10.5,
+    fontSize: 13,
     letterSpacing: 1.2,
     color: colors.inkFaint,
     marginBottom: 6,
   },
-  value: { fontFamily: 'Courier', fontSize: 12.5, lineHeight: 18 },
-  none: { fontFamily: fonts.body, fontSize: 13, color: colors.inkFaint },
+  value: { fontFamily: 'Courier', fontSize: 14, lineHeight: 18 },
+  none: { fontFamily: fonts.body, fontSize: 15, color: colors.inkFaint },
 });
 
 const c2 = StyleSheet.create({
@@ -96,5 +98,5 @@ const c2 = StyleSheet.create({
     justifyContent: 'center',
   },
   label: { fontFamily: fonts.bodySemi, fontSize: 14, color: colors.ink },
-  detail: { fontFamily: fonts.body, fontSize: 12, color: colors.inkFaint, marginTop: 1 },
+  detail: { fontFamily: fonts.body, fontSize: 14, color: colors.inkFaint, marginTop: 1 },
 });
