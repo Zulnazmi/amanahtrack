@@ -18,14 +18,17 @@ see [LICENSE](LICENSE).
 | Signed device ingestion (HMAC-SHA256) and photo SHA-256 re-verification | working, tested |
 | Manual counting with named witnesses | working, tested |
 | JWT auth, four roles, per-institution isolation, separation of duties | working, tested |
+| Two-person approval for spending, reversals and receipts | working, tested |
+| Replay protection for box messages and login throttling | working, tested |
+| Evidence photos in private cloud storage (Cloudflare R2) | working, tested |
 | REST API | working |
 | Pembantu Amanah: questions, forecasts and warnings (rules and statistics, no language model) | working, tested |
-| Mobile app (alerts, photo evidence, verify, per-entry proof) | working |
+| Mobile app (alerts, photo evidence, verify, per-entry proof, Malay and English, Android build) | working |
 | Box client (Raspberry Pi 5) | runs in simulation mode and posts signed events |
 | Live sensor feed and push notifications | built, tested against simulated boxes |
 | Cloud deployment | guide in CLOUD_SETUP.md, not yet run in production |
 
-210 tests pass (2 need a PostgreSQL test database). In the demo the box readings and alert photos are
+211 tests pass (4 more are skipped unless a PostgreSQL test database is available). In the demo the box readings and alert photos are
 **simulated**. The gaps are listed honestly because a demo that hides them
 falls apart under a judge's questions.
 
@@ -62,7 +65,7 @@ uvicorn app.main:app --reload
 Open http://localhost:8000/docs for the interactive API.
 
 ```bash
-pytest -q               # 94 tests (pip install -r requirements-dev.txt first)
+pytest -q               # 211 tests (pip install -r requirements-dev.txt first)
 ```
 
 ## Running the mobile app
