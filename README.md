@@ -26,7 +26,7 @@ see [LICENSE](LICENSE).
 | Mobile app (alerts, photo evidence, verify, per-entry proof, Malay and English, Android build) | working |
 | Box client (Raspberry Pi 5) | runs in simulation mode and posts signed events |
 | Live sensor feed and push notifications | built, tested against simulated boxes |
-| Cloud deployment | guide in CLOUD_SETUP.md, not yet run in production |
+| Cloud deployment | live on Render, with Neon PostgreSQL and Cloudflare R2 (see CLOUD_SETUP.md) |
 
 211 tests pass (4 more are skipped unless a PostgreSQL test database is available). In the demo the box readings and alert photos are
 **simulated**. The gaps are listed honestly because a demo that hides them
@@ -116,11 +116,11 @@ count it, in front of witnesses.
 
 Nothing here should be deployed as-is. In rough order:
 
-- **Deployment.** The cloud setup has not been run in production yet.
+- **Deployment hardening.** The backend runs on Render's free tier, which sleeps when idle and runs a single instance.
 - **Known integrity gaps.** Transaction status is not sealed, and no copy of
   the latest hash is kept outside the database.
-- **PostgreSQL in production.** Tested, not yet hosted. SQLite is fine for development and wrong for concurrent
-  writes from a bot, a dashboard, and several boxes at once.
+- **Database backups.** The live database is hosted PostgreSQL on Neon; scheduled backups of it and the evidence
+  bucket are not automated yet.
 - **Offline sync.** Rural suraus lose connectivity. The client currently
   assumes the network is there.
 - **A real treasurer's review of the fiqh rules.** The rules in `core/fiqh.py`
